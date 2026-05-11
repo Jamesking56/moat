@@ -1,12 +1,8 @@
-mod checks;
-mod cli;
-mod runner;
-mod support;
-
 use anyhow::Result;
 use clap::Parser;
+use moat::runner::AccountKind;
+use moat::{cli, runner, support};
 use owo_colors::OwoColorize;
-use runner::AccountKind;
 
 #[tokio::main]
 async fn main() -> Result<()> {

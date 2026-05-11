@@ -13,14 +13,16 @@ jobs:
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: aarch64-apple-darwin
             os: macos-14
-          - target: x86_64-apple-darwin
-            os: macos-13
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
           - target: aarch64-unknown-linux-gnu
@@ -66,6 +68,11 @@ jobs:
             echo "ASSET=${DIR}.tar.gz" >> "$GITHUB_ENV"
           fi
 
+      - name: Generate build provenance attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ env.ASSET }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -76,6 +83,10 @@ jobs:
     name: Publish release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -86,6 +97,11 @@ jobs:
         run: |
           cd dist
           shasum -a 256 * > SHA256SUMS
+
+      - name: Attest checksum file
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/SHA256SUMS
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2

@@ -8,11 +8,17 @@ pub struct Cell {
 impl Cell {
     pub fn plain(s: impl Into<String>) -> Self {
         let s = s.into();
-        Self { rendered: s.clone(), visible: s }
+        Self {
+            rendered: s.clone(),
+            visible: s,
+        }
     }
 
     pub fn styled(visible: impl Into<String>, rendered: impl Into<String>) -> Self {
-        Self { visible: visible.into(), rendered: rendered.into() }
+        Self {
+            visible: visible.into(),
+            rendered: rendered.into(),
+        }
     }
 }
 
@@ -64,5 +70,46 @@ pub fn truncate(s: &str, max: usize) -> String {
     } else {
         let kept: String = s.chars().take(max.saturating_sub(1)).collect();
         format!("{kept}…")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_leaves_short_strings_alone() {
+        assert_eq!(truncate("abc", 10), "abc");
+        assert_eq!(truncate("", 5), "");
+    }
+
+    #[test]
+    fn truncate_caps_long_strings_with_ellipsis() {
+        let t = truncate("abcdefghij", 5);
+        assert_eq!(t.chars().count(), 5);
+        assert!(t.ends_with('…'));
+        assert!(t.starts_with("abcd"));
+    }
+
+    #[test]
+    fn truncate_handles_multibyte() {
+        let t = truncate("αβγδεζηθ", 4);
+        assert_eq!(t.chars().count(), 4);
+        assert!(t.ends_with('…'));
+    }
+
+    #[test]
+    fn cell_plain_mirrors_visible_and_rendered() {
+        let c = Cell::plain("hi");
+        assert_eq!(c.visible, "hi");
+        assert_eq!(c.rendered, "hi");
+    }
+
+    #[test]
+    fn cell_styled_separates_visible_from_rendered() {
+        let c = Cell::styled("hi", "\x1b[31mhi\x1b[0m");
+        assert_eq!(c.visible, "hi");
+        assert_ne!(c.rendered, "hi");
+        assert!(c.rendered.contains("hi"));
     }
 }

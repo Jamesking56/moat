@@ -1,0 +1,73 @@
+[config]
+default_to_workspace = false
+skip_core_tasks = true
+
+[env]
+CARGO_TERM_COLOR = "always"
+
+# ─── Auto-fixers ──────────────────────────────────────────────────────────────
+
+[tasks.lint]
+description = "Auto-fix formatting and clippy issues"
+dependencies = ["lint-fmt", "lint-clippy"]
+
+[tasks.lint-fmt]
+command = "cargo"
+args = ["fmt", "--all"]
+
+[tasks.lint-clippy]
+command = "cargo"
+args = [
+    "clippy", "--all-targets", "--all-features", "--fix",
+    "--allow-dirty", "--allow-staged", "--", "-D", "warnings",
+]
+
+# ─── Read-only checks (run in CI) ─────────────────────────────────────────────
+
+[tasks."test:lint"]
+description = "Verify formatting and clippy without modifying files"
+dependencies = ["test-fmt", "test-clippy"]
+
+[tasks.test-fmt]
+command = "cargo"
+args = ["fmt", "--all", "--", "--check"]
+
+[tasks.test-clippy]
+command = "cargo"
+args = [
+    "clippy", "--all-targets", "--all-features", "--locked",
+    "--", "-D", "warnings",
+]
+
+[tasks."test:unit"]
+description = "Run all unit and integration tests"
+command = "cargo"
+args = ["test", "--all-features", "--locked"]
+
+[tasks."test:audit"]
+description = "Check dependencies against the RustSec advisory database"
+install_crate = { crate_name = "cargo-audit", binary = "cargo-audit", test_arg = "--version" }
+command = "cargo"
+args = ["audit"]
+
+[tasks."test:vet"]
+description = "Check dependencies against the cargo-vet supply-chain audits"
+install_crate = { crate_name = "cargo-vet", binary = "cargo-vet", test_arg = "--version" }
+command = "cargo"
+args = ["vet", "--locked"]
+
+[tasks."test:msrv"]
+description = "Check that the crate builds on the declared MSRV (1.88)"
+script_runner = "@shell"
+script = '''
+cargo +1.88.0 check --all-targets --locked
+'''
+
+# ─── The umbrella task ────────────────────────────────────────────────────────
+
+[tasks.test]
+description = "Run every check: lint + unit + audit + vet"
+dependencies = ["test:lint", "test:unit", "test:audit", "test:vet"]
+
+[tasks.default]
+alias = "test"

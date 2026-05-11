@@ -1,9 +1,12 @@
 use crate::checks::orgs::{
-    OrgContext, admins, members_without_2fa, outside_collaborators, two_factor_required,
+    OrgContext, admins, default_repo_permission, members_without_2fa, outside_collaborators,
+    two_factor_required,
 };
 use crate::checks::repos::{
-    RepoContext, branch_protection, context::RepoListing, dependabot_alerts, pr_reviews,
-    push_protection, secret_scanning, signed_commits, workflow_token,
+    RepoContext, admin_enforcement, branch_history, branch_protection, codeowners,
+    context::RepoListing, dependabot_alerts, pinned_actions, pr_reviews, pull_request_target,
+    push_protection, secret_scanning, security_md, signed_commits, webhooks, workflow_permissions,
+    workflow_token,
 };
 use crate::support::github::{Client, Fetch};
 use crate::support::outcome::{CheckOutcome, Status};
@@ -18,7 +21,7 @@ const MAX_REPO_NAME: usize = 40;
 
 type RepoCheck = (&'static str, &'static str, fn(&RepoContext) -> CheckOutcome);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AccountKind {
     Organization,
     User,
@@ -47,7 +50,10 @@ pub fn print_header(account: &str, kind: AccountKind) {
 }
 
 pub async fn detect_account(client: &Client, name: &str) -> Result<AccountKind> {
-    match client.get_json::<AccountType>(&format!("/users/{name}")).await? {
+    match client
+        .get_json::<AccountType>(&format!("/users/{name}"))
+        .await?
+    {
         Fetch::Ok(a) if a.kind == "Organization" => Ok(AccountKind::Organization),
         Fetch::Ok(a) if a.kind == "User" => Ok(AccountKind::User),
         Fetch::Ok(a) => bail!("unexpected account type `{}` for `{name}`", a.kind),
@@ -59,17 +65,33 @@ pub async fn detect_account(client: &Client, name: &str) -> Result<AccountKind> 
 }
 
 pub async fn run_org_checks(client: &Client, org: &str) -> Result<()> {
+    eprintln!(
+        "  {} fetching {}",
+        "→".bright_black(),
+        "organization".bold()
+    );
     let ctx = OrgContext::fetch(client, org).await?;
 
     let results = [
         (two_factor_required::NAME, two_factor_required::check(&ctx)),
         (members_without_2fa::NAME, members_without_2fa::check(&ctx)),
-        (outside_collaborators::NAME, outside_collaborators::check(&ctx)),
+        (
+            outside_collaborators::NAME,
+            outside_collaborators::check(&ctx),
+        ),
         (admins::NAME, admins::check(&ctx)),
+        (
+            default_repo_permission::NAME,
+            default_repo_permission::check(&ctx),
+        ),
     ];
 
     println!("  {}", "ORGANIZATION".bold());
-    let name_width = results.iter().map(|(n, _)| n.chars().count()).max().unwrap_or(0);
+    let name_width = results
+        .iter()
+        .map(|(n, _)| n.chars().count())
+        .max()
+        .unwrap_or(0);
     for (name, outcome) in &results {
         let pad = " ".repeat(name_width.saturating_sub(name.chars().count()));
         println!(
@@ -115,9 +137,9 @@ pub async fn run_repo_checks(client: &Client, account: &str, kind: AccountKind) 
 
     let listings: Vec<RepoListing> = match client.get_paginated(&listing_path).await? {
         Fetch::Ok(v) => v,
-        Fetch::Forbidden => bail!(
-            "no permission to list repositories for `{account}` — check your token scopes"
-        ),
+        Fetch::Forbidden => {
+            bail!("no permission to list repositories for `{account}` — check your token scopes")
+        }
         Fetch::NotFound => Vec::new(),
     };
     let total = listings.len();
@@ -145,13 +167,77 @@ pub async fn run_repo_checks(client: &Client, account: &str, kind: AccountKind) 
     contexts.sort_by(|a, b| a.name.cmp(&b.name));
 
     let columns: &[RepoCheck] = &[
-        (branch_protection::COLUMN, branch_protection::DESCRIPTION, branch_protection::check),
-        (signed_commits::COLUMN, signed_commits::DESCRIPTION, signed_commits::check),
-        (pr_reviews::COLUMN, pr_reviews::DESCRIPTION, pr_reviews::check),
-        (workflow_token::COLUMN, workflow_token::DESCRIPTION, workflow_token::check),
-        (secret_scanning::COLUMN, secret_scanning::DESCRIPTION, secret_scanning::check),
-        (push_protection::COLUMN, push_protection::DESCRIPTION, push_protection::check),
-        (dependabot_alerts::COLUMN, dependabot_alerts::DESCRIPTION, dependabot_alerts::check),
+        (
+            branch_protection::COLUMN,
+            branch_protection::DESCRIPTION,
+            branch_protection::check,
+        ),
+        (
+            signed_commits::COLUMN,
+            signed_commits::DESCRIPTION,
+            signed_commits::check,
+        ),
+        (
+            pr_reviews::COLUMN,
+            pr_reviews::DESCRIPTION,
+            pr_reviews::check,
+        ),
+        (
+            workflow_token::COLUMN,
+            workflow_token::DESCRIPTION,
+            workflow_token::check,
+        ),
+        (
+            secret_scanning::COLUMN,
+            secret_scanning::DESCRIPTION,
+            secret_scanning::check,
+        ),
+        (
+            push_protection::COLUMN,
+            push_protection::DESCRIPTION,
+            push_protection::check,
+        ),
+        (
+            dependabot_alerts::COLUMN,
+            dependabot_alerts::DESCRIPTION,
+            dependabot_alerts::check,
+        ),
+        (
+            admin_enforcement::COLUMN,
+            admin_enforcement::DESCRIPTION,
+            admin_enforcement::check,
+        ),
+        (
+            branch_history::COLUMN,
+            branch_history::DESCRIPTION,
+            branch_history::check,
+        ),
+        (
+            codeowners::COLUMN,
+            codeowners::DESCRIPTION,
+            codeowners::check,
+        ),
+        (
+            pinned_actions::COLUMN,
+            pinned_actions::DESCRIPTION,
+            pinned_actions::check,
+        ),
+        (
+            pull_request_target::COLUMN,
+            pull_request_target::DESCRIPTION,
+            pull_request_target::check,
+        ),
+        (
+            workflow_permissions::COLUMN,
+            workflow_permissions::DESCRIPTION,
+            workflow_permissions::check,
+        ),
+        (webhooks::COLUMN, webhooks::DESCRIPTION, webhooks::check),
+        (
+            security_md::COLUMN,
+            security_md::DESCRIPTION,
+            security_md::check,
+        ),
     ];
 
     let headers: Vec<&str> = std::iter::once("repo")
@@ -209,7 +295,11 @@ pub async fn run_repo_checks(client: &Client, account: &str, kind: AccountKind) 
     render::render(&headers, &rows);
     println!();
 
-    let column_width = columns.iter().map(|(n, _, _)| n.chars().count()).max().unwrap_or(0);
+    let column_width = columns
+        .iter()
+        .map(|(n, _, _)| n.chars().count())
+        .max()
+        .unwrap_or(0);
     println!("  {}", "COLUMNS".bold());
     for (name, description, _) in columns {
         let pad = " ".repeat(column_width.saturating_sub(name.chars().count()));
