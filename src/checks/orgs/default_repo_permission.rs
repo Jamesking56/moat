@@ -2,6 +2,7 @@ use super::context::{DefaultRepoPermissionState, OrgContext};
 use crate::support::outcome::CheckOutcome;
 
 pub const NAME: &str = "Default repo permission";
+pub const DESCRIPTION: &str = "base permission every org member gets on every org repo (Settings → Member privileges → Base permissions) — should be none or read";
 
 pub fn check(ctx: &OrgContext) -> CheckOutcome {
     match &ctx.default_repository_permission {

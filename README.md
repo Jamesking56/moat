@@ -34,9 +34,10 @@ Examples:
 moat audit <your-org>
 moat audit <your-org> --only org
 moat audit <your-org> --only repos
+moat audit <owner>/<repo>
 ```
 
-`<account>` can be a GitHub organization or a user. `--only org` runs only org-level checks; `--only repos` runs only repository-level checks.
+`<account>` can be a GitHub organization or a user. `--only org` runs only org-level checks; `--only repos` runs only repository-level checks. Passing `<owner>/<repo>` (e.g. `moat audit nunomaduro/version`) audits a single repository and skips org-level checks.
 
 ## Authentication
 
@@ -78,6 +79,18 @@ A classic PAT or a fine-grained token with the equivalent permissions both work.
 - Every workflow declares a top-level `permissions:` block that is not `write-all`
 - Repository webhooks use HTTPS and have a secret configured
 - `SECURITY.md` is present (at the repo root, in `.github/`, or in `docs/`)
+
+## Configuration
+
+`moat` looks for a `moat.toml` file at the root of each audited repository. Use it to disable checks that don't apply to that repo. Disabled checks are still shown in the output (as `off`) but don't count toward the failure total.
+
+```toml
+[checks]
+signed_commits = "off"
+codeowners = "off"
+```
+
+Check IDs match the repository checks listed above (`branch_protection`, `signed_commits`, `pr_reviews`, `workflow_token`, `secret_scanning`, `push_protection`, `dependabot_alerts`, `admin_enforcement`, `branch_history`, `codeowners`, `pinned_actions`, `pull_request_target`, `workflow_permissions`, `webhooks`, `security_md`). Values are `"on"` (default) or `"off"`.
 
 ## Exit codes
 

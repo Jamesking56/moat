@@ -39,6 +39,14 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Sync Cargo.toml version with tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i.bak -E "s/^version = \"[^\"]*\"/version = \"${VERSION}\"/" Cargo.toml
+          rm Cargo.toml.bak
+          cargo update -p moat
+
       - name: Install cross (linux aarch64)
         if: matrix.cross
         run: cargo install cross --locked
@@ -120,17 +128,102 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Verify tag matches Cargo.toml version
+      - name: Sync Cargo.toml version with tag
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 \
-            | python3 -c "import json,sys;print(json.load(sys.stdin)['packages'][0]['version'])")
-          if [ "$TAG_VERSION" != "$CRATE_VERSION" ]; then
-            echo "Tag $TAG_VERSION does not match Cargo.toml version $CRATE_VERSION" >&2
-            exit 1
-          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i.bak -E "s/^version = \"[^\"]*\"/version = \"${VERSION}\"/" Cargo.toml
+          rm Cargo.toml.bak
+          cargo update -p moat
 
       - name: Publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --locked
+        run: cargo publish --locked --allow-dirty
+
+  update-homebrew-tap:
+    name: Update Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: nunomaduro/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Download SHA256SUMS
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          curl -fsSL -o SHA256SUMS \
+            "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/SHA256SUMS"
+
+      - name: Update formula
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sha() { grep "moat-${VERSION}-$1\.tar\.gz\$" SHA256SUMS | awk '{print $1}'; }
+          MAC_ARM=$(sha aarch64-apple-darwin)
+          LINUX_ARM=$(sha aarch64-unknown-linux-gnu)
+          LINUX_X86=$(sha x86_64-unknown-linux-gnu)
+
+          for v in MAC_ARM LINUX_ARM LINUX_X86; do
+            if [ -z "${!v}" ]; then
+              echo "Missing sha256 for $v" >&2
+              exit 1
+            fi
+          done
+
+          cat > homebrew-tap/Formula/moat.rb <<EOF
+          # Place this file at Formula/moat.rb in a repo named \`homebrew-tap\`
+          # (e.g. github.com/nunomaduro/homebrew-tap), then users run:
+          #   brew install nunomaduro/tap/moat
+          #
+          # This file is updated automatically by the release workflow.
+
+          class Moat < Formula
+            desc "Supply-chain security auditor for GitHub organizations"
+            homepage "https://github.com/nunomaduro/moat"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/nunomaduro/moat/releases/download/v#{version}/moat-#{version}-aarch64-apple-darwin.tar.gz"
+                sha256 "${MAC_ARM}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/nunomaduro/moat/releases/download/v#{version}/moat-#{version}-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "${LINUX_ARM}"
+              end
+              on_intel do
+                url "https://github.com/nunomaduro/moat/releases/download/v#{version}/moat-#{version}-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "${LINUX_X86}"
+              end
+            end
+
+            def install
+              bin.install "moat"
+            end
+
+            test do
+              assert_match "moat", shell_output("#{bin}/moat --help")
+            end
+          end
+          EOF
+
+      - name: Commit and push
+        working-directory: homebrew-tap
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "Formula already up to date."
+            exit 0
+          fi
+          git add Formula/moat.rb
+          git commit -m "chore: bump moat to v${VERSION}"
+          git push

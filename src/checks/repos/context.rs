@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::support::github::{Client, Fetch};
 use crate::support::outcome::CheckOutcome;
 use crate::support::workflows::{self, WorkflowsState};
@@ -17,6 +18,7 @@ pub struct RepoContext {
     pub codeowners: FilePresence,
     pub security_md: FilePresence,
     pub webhooks: WebhooksState,
+    pub config: Config,
 }
 
 pub enum BranchProtectionState {
@@ -170,6 +172,7 @@ impl RepoContext {
                 codeowners: FilePresence::Unknown,
                 security_md: FilePresence::Unknown,
                 webhooks: WebhooksState::NoPermission,
+                config: Config::default(),
             });
         }
 
@@ -231,6 +234,7 @@ impl RepoContext {
         let codeowners = locate_codeowners(client, org, &repo.name).await?;
         let security_md = locate_security_md(client, org, &repo.name).await?;
         let webhooks = fetch_webhooks(client, org, &repo.name).await?;
+        let config = fetch_config(client, org, &repo.name).await?;
 
         Ok(Self {
             name: repo.name,
@@ -245,7 +249,21 @@ impl RepoContext {
             codeowners,
             security_md,
             webhooks,
+            config,
         })
+    }
+}
+
+async fn fetch_config(client: &Client, org: &str, repo: &str) -> Result<Config> {
+    match client
+        .get_raw(&format!(
+            "/repos/{org}/{repo}/contents/{}",
+            crate::config::FILE_NAME
+        ))
+        .await?
+    {
+        Fetch::Ok(text) => Config::parse(&text),
+        Fetch::NotFound | Fetch::Forbidden => Ok(Config::default()),
     }
 }
 

@@ -38,6 +38,7 @@ fn ctx(branch: BranchProtectionState, token: WorkflowTokenState) -> RepoContext 
         codeowners: FilePresence::Absent,
         security_md: FilePresence::Absent,
         webhooks: WebhooksState::Ok(Vec::new()),
+        config: moat::config::Config::default(),
     }
 }
 

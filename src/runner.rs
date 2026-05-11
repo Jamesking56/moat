@@ -1,6 +1,6 @@
 use crate::checks::orgs::{
     OrgContext, admins, default_repo_permission, members_without_2fa, outside_collaborators,
-    two_factor_required,
+    release_immutability, two_factor_required,
 };
 use crate::checks::repos::{
     RepoContext, admin_enforcement, branch_history, branch_protection, codeowners,
@@ -19,7 +19,12 @@ use serde::Deserialize;
 const CONCURRENCY: usize = 12;
 const MAX_REPO_NAME: usize = 40;
 
-type RepoCheck = (&'static str, &'static str, fn(&RepoContext) -> CheckOutcome);
+type RepoCheck = (
+    &'static str,
+    &'static str,
+    &'static str,
+    fn(&RepoContext) -> CheckOutcome,
+);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AccountKind {
@@ -31,6 +36,20 @@ pub enum AccountKind {
 struct AccountType {
     #[serde(rename = "type")]
     kind: String,
+}
+
+pub fn print_repo_header(owner: &str, repo: &str) {
+    println!();
+    println!(
+        "  {}   {}{}{} {} {}",
+        "moat".bold().cyan(),
+        owner.bold(),
+        "/".bright_black(),
+        repo.bold(),
+        "·".bright_black(),
+        "repository".dimmed()
+    );
+    println!();
 }
 
 pub fn print_header(account: &str, kind: AccountKind) {
@@ -64,7 +83,7 @@ pub async fn detect_account(client: &Client, name: &str) -> Result<AccountKind> 
     }
 }
 
-pub async fn run_org_checks(client: &Client, org: &str) -> Result<()> {
+pub async fn run_org_checks(client: &Client, org: &str, verbose: bool) -> Result<()> {
     eprintln!(
         "  {} fetching {}",
         "→".bright_black(),
@@ -73,26 +92,54 @@ pub async fn run_org_checks(client: &Client, org: &str) -> Result<()> {
     let ctx = OrgContext::fetch(client, org).await?;
 
     let results = [
-        (two_factor_required::NAME, two_factor_required::check(&ctx)),
-        (members_without_2fa::NAME, members_without_2fa::check(&ctx)),
+        (
+            two_factor_required::NAME,
+            two_factor_required::DESCRIPTION,
+            two_factor_required::check(&ctx),
+        ),
+        (
+            members_without_2fa::NAME,
+            members_without_2fa::DESCRIPTION,
+            members_without_2fa::check(&ctx),
+        ),
         (
             outside_collaborators::NAME,
+            outside_collaborators::DESCRIPTION,
             outside_collaborators::check(&ctx),
         ),
-        (admins::NAME, admins::check(&ctx)),
+        (admins::NAME, admins::DESCRIPTION, admins::check(&ctx)),
         (
             default_repo_permission::NAME,
+            default_repo_permission::DESCRIPTION,
             default_repo_permission::check(&ctx),
+        ),
+        (
+            release_immutability::NAME,
+            release_immutability::DESCRIPTION,
+            release_immutability::check(&ctx),
         ),
     ];
 
-    println!("  {}", "ORGANIZATION".bold());
+    let passing = results
+        .iter()
+        .filter(|(_, _, o)| o.status == Status::Pass)
+        .count();
+    println!(
+        "  {}   {}{} {} {} {}",
+        "ORGANIZATION".bold(),
+        results.len().to_string().bold(),
+        " checks".dimmed(),
+        "·".bright_black(),
+        passing.to_string().bold(),
+        "passing".dimmed(),
+    );
+    println!();
     let name_width = results
         .iter()
-        .map(|(n, _)| n.chars().count())
+        .map(|(n, _, _)| n.chars().count())
         .max()
         .unwrap_or(0);
-    for (name, outcome) in &results {
+    for (name, _, outcome) in &results {
         let pad = " ".repeat(name_width.saturating_sub(name.chars().count()));
         println!(
             "    {}  {}{}  {}",
@@ -101,19 +148,39 @@ pub async fn run_org_checks(client: &Client, org: &str) -> Result<()> {
             pad,
             outcome.colored_summary()
         );
-        render_items(&outcome.items, name_width + 8);
+        render_items(&outcome.items, name_width + 9, verbose);
     }
+    println!();
+
+    println!("  {}", "CHECKS".bold());
+    for (name, description, _) in &results {
+        let pad = " ".repeat(name_width.saturating_sub(name.chars().count()));
+        println!("    {}{}  {}", name.bold(), pad, description.dimmed());
+    }
+    println!();
+
+    println!(
+        "    {}  {} pass  {}  {} fail  {}  {} warning  {}  {} skipped / no permission",
+        "LEGEND".dimmed(),
+        "✓".green(),
+        "·".bright_black(),
+        "✗".red(),
+        "·".bright_black(),
+        "!".yellow(),
+        "·".bright_black(),
+        "·".dimmed(),
+    );
     println!();
     Ok(())
 }
 
-fn render_items(items: &[String], indent: usize) {
+fn render_items(items: &[String], indent: usize, verbose: bool) {
     if items.is_empty() {
         return;
     }
     const PREVIEW: usize = 5;
     let pad = " ".repeat(indent);
-    if items.len() <= PREVIEW + 1 {
+    if verbose || items.len() <= PREVIEW + 1 {
         for item in items {
             println!("{pad}{} {}", "·".bright_black(), item.dimmed());
         }
@@ -121,7 +188,7 @@ fn render_items(items: &[String], indent: usize) {
         let shown: Vec<&str> = items.iter().take(PREVIEW).map(String::as_str).collect();
         let rest = items.len() - PREVIEW;
         println!(
-            "{pad}{}  {}{}",
+            "{pad}{} {}{}",
             "·".bright_black(),
             shown.join(", ").dimmed(),
             format!("  +{rest} more").bright_black()
@@ -129,7 +196,12 @@ fn render_items(items: &[String], indent: usize) {
     }
 }
 
-pub async fn run_repo_checks(client: &Client, account: &str, kind: AccountKind) -> Result<()> {
+pub async fn run_repo_checks(
+    client: &Client,
+    account: &str,
+    kind: AccountKind,
+    verbose: bool,
+) -> Result<()> {
     let listing_path = match kind {
         AccountKind::Organization => format!("/orgs/{account}/repos?type=all"),
         AccountKind::User => format!("/users/{account}/repos"),
@@ -142,6 +214,38 @@ pub async fn run_repo_checks(client: &Client, account: &str, kind: AccountKind) 
         }
         Fetch::NotFound => Vec::new(),
     };
+    let listings: Vec<RepoListing> = listings
+        .into_iter()
+        .filter(|r| !r.fork && !r.archived)
+        .collect();
+    render_repo_checks(client, account, listings, verbose).await
+}
+
+pub async fn run_single_repo_check(
+    client: &Client,
+    owner: &str,
+    repo: &str,
+    verbose: bool,
+) -> Result<()> {
+    let listing: RepoListing = match client
+        .get_json::<RepoListing>(&format!("/repos/{owner}/{repo}"))
+        .await?
+    {
+        Fetch::Ok(v) => v,
+        Fetch::Forbidden => {
+            bail!("no permission to read `{owner}/{repo}` — check your token scopes")
+        }
+        Fetch::NotFound => bail!("no repository named `{owner}/{repo}` was found"),
+    };
+    render_repo_checks(client, owner, vec![listing], verbose).await
+}
+
+async fn render_repo_checks(
+    client: &Client,
+    account: &str,
+    listings: Vec<RepoListing>,
+    _verbose: bool,
+) -> Result<()> {
     let total = listings.len();
     eprintln!(
         "  {} scanning {} repositories",
@@ -168,72 +272,91 @@ pub async fn run_repo_checks(client: &Client, account: &str, kind: AccountKind) 
 
     let columns: &[RepoCheck] = &[
         (
+            "branch_protection",
             branch_protection::COLUMN,
             branch_protection::DESCRIPTION,
             branch_protection::check,
         ),
         (
+            "signed_commits",
             signed_commits::COLUMN,
             signed_commits::DESCRIPTION,
             signed_commits::check,
         ),
         (
+            "pr_reviews",
             pr_reviews::COLUMN,
             pr_reviews::DESCRIPTION,
             pr_reviews::check,
         ),
         (
+            "workflow_token",
             workflow_token::COLUMN,
             workflow_token::DESCRIPTION,
             workflow_token::check,
         ),
         (
+            "secret_scanning",
             secret_scanning::COLUMN,
             secret_scanning::DESCRIPTION,
             secret_scanning::check,
         ),
         (
+            "push_protection",
             push_protection::COLUMN,
             push_protection::DESCRIPTION,
             push_protection::check,
         ),
         (
+            "dependabot_alerts",
             dependabot_alerts::COLUMN,
             dependabot_alerts::DESCRIPTION,
             dependabot_alerts::check,
         ),
         (
+            "admin_enforcement",
             admin_enforcement::COLUMN,
             admin_enforcement::DESCRIPTION,
             admin_enforcement::check,
         ),
         (
+            "branch_history",
             branch_history::COLUMN,
             branch_history::DESCRIPTION,
             branch_history::check,
         ),
         (
+            "codeowners",
             codeowners::COLUMN,
             codeowners::DESCRIPTION,
             codeowners::check,
         ),
         (
+            "pinned_actions",
             pinned_actions::COLUMN,
             pinned_actions::DESCRIPTION,
             pinned_actions::check,
         ),
         (
+            "pull_request_target",
             pull_request_target::COLUMN,
             pull_request_target::DESCRIPTION,
             pull_request_target::check,
         ),
         (
+            "workflow_permissions",
             workflow_permissions::COLUMN,
             workflow_permissions::DESCRIPTION,
             workflow_permissions::check,
         ),
-        (webhooks::COLUMN, webhooks::DESCRIPTION, webhooks::check),
         (
+            "webhooks",
+            webhooks::COLUMN,
+            webhooks::DESCRIPTION,
+            webhooks::check,
+        ),
+        (
+            "security_md",
             security_md::COLUMN,
             security_md::DESCRIPTION,
             security_md::check,
@@ -241,7 +364,7 @@ pub async fn run_repo_checks(client: &Client, account: &str, kind: AccountKind) 
     ];
 
     let headers: Vec<&str> = std::iter::once("repo")
-        .chain(columns.iter().map(|(name, _, _)| *name))
+        .chain(columns.iter().map(|(_, name, _, _)| *name))
         .collect();
 
     let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(contexts.len());
@@ -261,12 +384,16 @@ pub async fn run_repo_checks(client: &Client, account: &str, kind: AccountKind) 
         let mut row = Vec::with_capacity(columns.len() + 1);
         row.push(name_cell);
 
-        for (i, (_, _, run)) in columns.iter().enumerate() {
-            let outcome = run(ctx);
-            if !ctx.archived && outcome.status == Status::Fail {
+        for (i, (id, _, _, run)) in columns.iter().enumerate() {
+            let (outcome, disabled) = if ctx.config.is_off(id) {
+                (CheckOutcome::skipped("off"), true)
+            } else {
+                (run(ctx), false)
+            };
+            if !ctx.archived && !disabled && outcome.status == Status::Fail {
                 totals[i] += 1;
             }
-            let rendered = if ctx.archived {
+            let rendered = if ctx.archived || disabled {
                 outcome.summary.dimmed().to_string()
             } else {
                 outcome.colored_summary()
@@ -297,11 +424,11 @@ pub async fn run_repo_checks(client: &Client, account: &str, kind: AccountKind) 
 
     let column_width = columns
         .iter()
-        .map(|(n, _, _)| n.chars().count())
+        .map(|(_, n, _, _)| n.chars().count())
         .max()
         .unwrap_or(0);
     println!("  {}", "COLUMNS".bold());
-    for (name, description, _) in columns {
+    for (_, name, description, _) in columns {
         let pad = " ".repeat(column_width.saturating_sub(name.chars().count()));
         println!("    {}{}  {}", name.bold(), pad, description.dimmed());
     }
@@ -336,7 +463,7 @@ pub async fn run_repo_checks(client: &Client, account: &str, kind: AccountKind) 
     let parts: Vec<String> = columns
         .iter()
         .zip(totals.iter())
-        .map(|((name, _, _), failures)| {
+        .map(|((_, name, _, _), failures)| {
             let count = if *failures == 0 {
                 failures.to_string().dimmed().to_string()
             } else {

@@ -18,6 +18,10 @@ pub enum Command {
 
         #[arg(long, value_enum)]
         only: Option<Only>,
+
+        /// Display all collaborators and members instead of truncating the list.
+        #[arg(short, long)]
+        verbose: bool,
     },
 }
 

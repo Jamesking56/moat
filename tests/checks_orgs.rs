@@ -1,5 +1,5 @@
 use moat::checks::orgs::context::{
-    DefaultRepoPermissionState, MemberList, OrgContext, TwoFactorState,
+    DefaultRepoPermissionState, MemberList, OrgContext, ReleaseImmutabilityState, TwoFactorState,
 };
 use moat::checks::orgs::{admins, members_without_2fa, outside_collaborators, two_factor_required};
 use moat::support::github::Client;
@@ -19,6 +19,7 @@ fn ctx(
         outside_collaborators: outside,
         admins,
         default_repository_permission: DefaultRepoPermissionState::Read,
+        release_immutability: ReleaseImmutabilityState::Enabled,
     }
 }
 
