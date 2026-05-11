@@ -1,0 +1,80 @@
+# moat
+
+Supply-chain security auditor for GitHub organizations.
+
+`moat` audits a GitHub user or organization against a set of supply-chain hardening checks — the kind of controls you want in place before a malicious dependency, a compromised maintainer account, or a leaked token turns into an incident.
+
+## Install
+
+### Homebrew (macOS / Linux)
+
+```sh
+brew install nunomaduro/tap/moat
+```
+
+### Cargo
+
+```sh
+cargo install moat
+```
+
+### Prebuilt binaries
+
+Download the archive for your platform from the [releases page](https://github.com/nunomaduro/moat/releases) and place `moat` on your `PATH`.
+
+## Usage
+
+```sh
+moat audit <account>
+```
+
+Examples:
+
+```sh
+moat audit laravel
+moat audit laravel --only org
+moat audit laravel --only repos
+```
+
+`<account>` can be a GitHub organization or a user. `--only org` runs only org-level checks; `--only repos` runs only repository-level checks.
+
+## Authentication
+
+`moat` resolves a GitHub token in this order:
+
+1. `GITHUB_TOKEN` environment variable
+2. `GH_TOKEN` environment variable
+3. `gh auth token` (if the [GitHub CLI](https://cli.github.com) is installed and logged in)
+
+For organization audits the token needs:
+
+- `read:org` — list members, admins, outside collaborators, 2FA enforcement
+- `repo` — read branch protection, required reviews, secret scanning, Dependabot alerts, workflow permissions
+
+A classic PAT or a fine-grained token with the equivalent permissions both work. For user accounts (no org scope), only repo read access is required.
+
+## Checks
+
+### Organization
+- Two-factor authentication required for all members
+- Members without 2FA enabled
+- Number of organization admins (owners)
+- Outside collaborators with access to private repos
+
+### Repository
+- Branch protection enabled on the default branch
+- Pull request reviews required before merge
+- Signed commits required
+- Secret scanning enabled
+- Push protection enabled
+- Dependabot alerts enabled
+- Default `GITHUB_TOKEN` workflow permissions (read vs. write)
+
+## Exit codes
+
+- `0` — all checks passed
+- non-zero — at least one check failed or an error occurred
+
+## License
+
+MIT — see [LICENSE](LICENSE).
