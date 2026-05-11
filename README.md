@@ -31,9 +31,9 @@ moat audit <account>
 Examples:
 
 ```sh
-moat audit laravel
-moat audit laravel --only org
-moat audit laravel --only repos
+moat audit <your-org>
+moat audit <your-org> --only org
+moat audit <your-org> --only repos
 ```
 
 `<account>` can be a GitHub organization or a user. `--only org` runs only org-level checks; `--only repos` runs only repository-level checks.
