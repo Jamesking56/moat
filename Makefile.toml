@@ -56,6 +56,11 @@ install_crate = { crate_name = "cargo-vet", binary = "cargo-vet", test_arg = "--
 command = "cargo"
 args = ["vet", "--locked"]
 
+[tasks."test:typos"]
+description = "Check for typos across the codebase"
+install_crate = { crate_name = "typos-cli", binary = "typos", test_arg = "--version", version = "1.42.3" }
+command = "typos"
+
 [tasks."test:msrv"]
 description = "Check that the crate builds on the declared MSRV (1.88)"
 script_runner = "@shell"
@@ -66,8 +71,8 @@ cargo +1.88.0 check --all-targets --locked
 # ─── The umbrella task ────────────────────────────────────────────────────────
 
 [tasks.test]
-description = "Run every check: lint + unit + audit + vet"
-dependencies = ["test:lint", "test:unit", "test:audit", "test:vet"]
+description = "Run every check: lint + unit + audit + vet + typos"
+dependencies = ["test:lint", "test:unit", "test:audit", "test:vet", "test:typos"]
 
 [tasks.default]
 alias = "test"
