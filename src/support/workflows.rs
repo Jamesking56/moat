@@ -1,5 +1,6 @@
 use crate::support::github::{Client, Fetch};
 use anyhow::Result;
+use futures::future::try_join_all;
 use serde::Deserialize;
 use serde_yaml::Value;
 
@@ -30,17 +31,26 @@ pub async fn fetch_workflows(client: &Client, owner: &str, repo: &str) -> Result
             Fetch::Forbidden => return Ok(WorkflowsState::NoPermission),
         };
 
-    let mut out = Vec::new();
-    for entry in entries {
-        if entry.kind != "file" {
-            continue;
-        }
-        let lower = entry.name.to_ascii_lowercase();
-        if !(lower.ends_with(".yml") || lower.ends_with(".yaml")) {
-            continue;
-        }
+    let candidates: Vec<ContentEntry> = entries
+        .into_iter()
+        .filter(|e| {
+            if e.kind != "file" {
+                return false;
+            }
+            let lower = e.name.to_ascii_lowercase();
+            lower.ends_with(".yml") || lower.ends_with(".yaml")
+        })
+        .collect();
+
+    let raws = try_join_all(candidates.iter().map(|entry| {
         let raw_path = format!("/repos/{owner}/{repo}/contents/{}", entry.path);
-        let raw = match client.get_raw(&raw_path).await? {
+        async move { client.get_raw(&raw_path).await }
+    }))
+    .await?;
+
+    let mut out = Vec::new();
+    for (entry, raw) in candidates.into_iter().zip(raws) {
+        let raw = match raw {
             Fetch::Ok(s) => s,
             Fetch::NotFound | Fetch::Forbidden => continue,
         };

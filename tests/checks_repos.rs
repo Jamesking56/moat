@@ -4,8 +4,8 @@ use moat::checks::repos::context::{
     WebhooksState, WorkflowTokenState,
 };
 use moat::checks::repos::{
-    branch_protection, dependabot_alerts, direct_collaborators, pr_reviews, push_protection,
-    secret_scanning, signed_commits, workflow_token,
+    dependabot_alerts, direct_collaborators, pr_reviews, protected_release_branches,
+    push_protection, secret_scanning, signed_commits, workflow_token,
 };
 use moat::support::github::Client;
 use moat::support::outcome::Status;
@@ -47,11 +47,12 @@ fn ctx(branch: BranchProtectionState, token: WorkflowTokenState) -> RepoContext 
 #[test]
 fn branch_protection_states() {
     assert_eq!(
-        branch_protection::check(&ctx(protected(false, false), WorkflowTokenState::Read)).status,
+        protected_release_branches::check(&ctx(protected(false, false), WorkflowTokenState::Read))
+            .status,
         Status::Pass
     );
     assert_eq!(
-        branch_protection::check(&ctx(
+        protected_release_branches::check(&ctx(
             BranchProtectionState::Unprotected,
             WorkflowTokenState::Read
         ))
@@ -61,12 +62,12 @@ fn branch_protection_states() {
     let mut no_default = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     no_default.branch_protections = BranchProtections::none();
     assert_eq!(
-        branch_protection::check(&no_default).status,
+        protected_release_branches::check(&no_default).status,
         Status::Skipped
     );
 
     assert_eq!(
-        branch_protection::check(&ctx(
+        protected_release_branches::check(&ctx(
             BranchProtectionState::NoPermission,
             WorkflowTokenState::Read
         ))

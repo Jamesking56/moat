@@ -3,8 +3,22 @@ use crate::support::github::{Client, Fetch, Fetch403};
 use crate::support::outcome::CheckOutcome;
 use crate::support::workflows::{self, WorkflowsState};
 use anyhow::Result;
+use futures::future::try_join_all;
 use owo_colors::OwoColorize;
 use serde::Deserialize;
+
+async fn traced<F, T>(repo: &str, label: &str, fut: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    let out = fut.await;
+    eprintln!(
+        "  {} {}",
+        "→".bright_black(),
+        format!("{repo}: {label}").bright_black()
+    );
+    out
+}
 
 pub struct RepoContext {
     pub name: String,
@@ -260,93 +274,79 @@ impl RepoContext {
             });
         }
 
-        eprintln!(
-            "  {} {}",
-            "→".bright_black(),
-            format!("{}: loading config and release branches", repo.name).bright_black()
-        );
+        // Phase 1: config + branch listing in parallel (branch protections need both).
+        let (config, branch_entries) = tokio::try_join!(
+            traced(&repo.name, "config", fetch_config(client, org, &repo.name)),
+            traced(
+                &repo.name,
+                "branch listing",
+                fetch_branch_entries(client, org, &repo.name),
+            ),
+        )?;
 
-        let config = fetch_config(client, org, &repo.name).await?;
+        let mut release_branch_names =
+            compute_release_branches(&repo.default_branch, &config, branch_entries);
+        release_branch_names.sort();
 
-        let release_branch_names =
-            discover_release_branches(client, org, &repo.name, &repo.default_branch, &config)
-                .await?;
+        // Phase 2: every remaining endpoint runs concurrently.
+        let (
+            branches,
+            workflow_token,
+            dependabot_alerts,
+            workflows,
+            security_md,
+            dependabot_config,
+            webhooks,
+            direct_collaborators,
+        ) = tokio::try_join!(
+            traced(
+                &repo.name,
+                "branch protections",
+                fetch_all_branch_protections(client, org, &repo.name, &release_branch_names),
+            ),
+            traced(
+                &repo.name,
+                "workflow token permissions",
+                fetch_workflow_token(client, org, &repo.name),
+            ),
+            traced(
+                &repo.name,
+                "dependabot alerts",
+                fetch_dependabot_alerts(client, org, &repo.name),
+            ),
+            traced(
+                &repo.name,
+                "workflows",
+                workflows::fetch_workflows(client, org, &repo.name),
+            ),
+            traced(
+                &repo.name,
+                "SECURITY.md",
+                locate_security_md(client, org, &repo.name),
+            ),
+            traced(
+                &repo.name,
+                "dependabot config",
+                fetch_dependabot_config(client, org, &repo.name),
+            ),
+            traced(
+                &repo.name,
+                "webhooks",
+                fetch_webhooks(client, org, &repo.name),
+            ),
+            traced(
+                &repo.name,
+                "direct collaborators",
+                fetch_direct_collaborators(client, org, &repo.name, repo.private),
+            ),
+        )?;
 
-        eprintln!(
-            "  {} {}",
-            "→".bright_black(),
-            format!(
-                "{}: branches → {}",
-                repo.name,
-                if release_branch_names.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    release_branch_names.join(", ")
-                }
-            )
-            .bright_black()
-        );
-
-        let mut branches = Vec::with_capacity(release_branch_names.len());
-        for branch in &release_branch_names {
-            eprintln!(
-                "  {} {}",
-                "→".bright_black(),
-                format!("{}: fetching protection for {}", repo.name, branch).bright_black()
-            );
-            let state = fetch_branch_protection(client, org, &repo.name, branch).await?;
-            branches.push((branch.clone(), state));
-        }
         let branch_protections = BranchProtections { branches };
-
-        let workflow_token = match client
-            .get_json::<WorkflowPerms>(&format!(
-                "/repos/{org}/{}/actions/permissions/workflow",
-                repo.name
-            ))
-            .await?
-        {
-            Fetch::Ok(w) if w.default_workflow_permissions == "read" => WorkflowTokenState::Read,
-            Fetch::Ok(_) => WorkflowTokenState::Write,
-            _ => WorkflowTokenState::NoPermission,
-        };
 
         let plan_gated = repo.private && branch_protections.any_plan_gated();
         let secret_scanning = pick_feature(&repo, |s| &s.secret_scanning, plan_gated);
         let push_protection =
             pick_feature(&repo, |s| &s.secret_scanning_push_protection, plan_gated);
-
-        eprintln!(
-            "  {} {}",
-            "→".bright_black(),
-            format!("{}: fetching security & analysis settings", repo.name).bright_black()
-        );
-
-        let dependabot_alerts = match client
-            .get_presence(&format!("/repos/{org}/{}/vulnerability-alerts", repo.name))
-            .await?
-        {
-            Fetch::Ok(_) => FeatureState::Enabled,
-            Fetch::NotFound => FeatureState::Disabled,
-            Fetch::Forbidden => FeatureState::Unknown,
-        };
-
-        eprintln!(
-            "  {} {}",
-            "→".bright_black(),
-            format!(
-                "{}: scanning workflows, SECURITY.md, webhooks, collaborators",
-                repo.name
-            )
-            .bright_black()
-        );
-
-        let workflows = workflows::fetch_workflows(client, org, &repo.name).await?;
-        let security_md = locate_security_md(client, org, &repo.name).await?;
-        let dependabot_config = fetch_dependabot_config(client, org, &repo.name).await?;
-        let webhooks = fetch_webhooks(client, org, &repo.name).await?;
-        let direct_collaborators =
-            fetch_direct_collaborators(client, org, &repo.name, repo.private).await?;
 
         Ok(Self {
             name: repo.name,
@@ -403,13 +403,23 @@ struct BranchEntry {
     name: String,
 }
 
-async fn discover_release_branches(
-    client: &Client,
-    org: &str,
-    repo: &str,
+async fn fetch_branch_entries(client: &Client, org: &str, repo: &str) -> Result<Vec<BranchEntry>> {
+    Ok(
+        match client
+            .get_paginated::<BranchEntry>(&format!("/repos/{org}/{repo}/branches"))
+            .await?
+        {
+            Fetch::Ok(list) => list,
+            Fetch::Forbidden | Fetch::NotFound => Vec::new(),
+        },
+    )
+}
+
+fn compute_release_branches(
     default_branch: &Option<String>,
     config: &Config,
-) -> Result<Vec<String>> {
+    entries: Vec<BranchEntry>,
+) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -425,21 +435,56 @@ async fn discover_release_branches(
         }
     }
 
-    match client
-        .get_paginated::<BranchEntry>(&format!("/repos/{org}/{repo}/branches"))
-        .await?
-    {
-        Fetch::Ok(list) => {
-            for entry in list {
-                if is_release_pattern(&entry.name) && seen.insert(entry.name.clone()) {
-                    out.push(entry.name);
-                }
-            }
+    for entry in entries {
+        if is_release_pattern(&entry.name) && seen.insert(entry.name.clone()) {
+            out.push(entry.name);
         }
-        Fetch::Forbidden | Fetch::NotFound => {}
     }
 
-    Ok(out)
+    out
+}
+
+async fn fetch_all_branch_protections(
+    client: &Client,
+    org: &str,
+    repo: &str,
+    branches: &[String],
+) -> Result<Vec<(String, BranchProtectionState)>> {
+    try_join_all(branches.iter().map(|branch| async move {
+        let state = fetch_branch_protection(client, org, repo, branch).await?;
+        Ok::<_, anyhow::Error>((branch.clone(), state))
+    }))
+    .await
+}
+
+async fn fetch_workflow_token(
+    client: &Client,
+    org: &str,
+    repo: &str,
+) -> Result<WorkflowTokenState> {
+    Ok(
+        match client
+            .get_json::<WorkflowPerms>(&format!("/repos/{org}/{repo}/actions/permissions/workflow"))
+            .await?
+        {
+            Fetch::Ok(w) if w.default_workflow_permissions == "read" => WorkflowTokenState::Read,
+            Fetch::Ok(_) => WorkflowTokenState::Write,
+            _ => WorkflowTokenState::NoPermission,
+        },
+    )
+}
+
+async fn fetch_dependabot_alerts(client: &Client, org: &str, repo: &str) -> Result<FeatureState> {
+    Ok(
+        match client
+            .get_presence(&format!("/repos/{org}/{repo}/vulnerability-alerts"))
+            .await?
+        {
+            Fetch::Ok(_) => FeatureState::Enabled,
+            Fetch::NotFound => FeatureState::Disabled,
+            Fetch::Forbidden => FeatureState::Unknown,
+        },
+    )
 }
 
 fn is_release_pattern(name: &str) -> bool {

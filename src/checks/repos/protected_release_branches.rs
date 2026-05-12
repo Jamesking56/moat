@@ -1,7 +1,7 @@
 use super::context::{BranchEval, BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const COLUMN: &str = "protected branch";
+pub const COLUMN: &str = "Protected Release Branches";
 pub const DESCRIPTION: &str =
     "release branches have a protection rule (Settings → Branches → Add branch ruleset)";
 

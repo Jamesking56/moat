@@ -6,11 +6,16 @@ use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-fn step(label: &str) {
-    eprintln!("  {} {}", "→".bright_black(), label.dimmed());
-}
-
 const COLLABORATOR_CONCURRENCY: usize = 12;
+
+async fn traced<F, T>(label: &str, fut: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    let out = fut.await;
+    eprintln!("  {} {}", "→".bright_black(), label.dimmed());
+    out
+}
 
 pub struct OrgContext {
     pub two_factor_required: TwoFactorState,
@@ -134,11 +139,56 @@ struct User {
 
 impl OrgContext {
     pub async fn fetch(client: &Client, org: &str) -> Result<Self> {
-        step("organization settings");
-        let (two_factor_required, default_repository_permission) = match client
-            .get_json::<OrgResponse>(&format!("/orgs/{org}"))
-            .await?
-        {
+        let org_path = format!("/orgs/{org}");
+        let immut_path = format!("/orgs/{org}/settings/immutable-releases");
+        let fork_pr_path = format!("/orgs/{org}/actions/permissions/fork-pr-contributor-approval");
+        let wf_perms_path = format!("/orgs/{org}/actions/permissions/workflow");
+        let sec_defaults_path = format!("/orgs/{org}/code-security/configurations/defaults");
+        let members_2fa_path = format!("/orgs/{org}/members?filter=2fa_disabled");
+        let admins_path = format!("/orgs/{org}/members?role=admin");
+
+        let (
+            org_resp,
+            immut_resp,
+            fork_pr_resp,
+            wf_perms_resp,
+            sec_defaults_resp,
+            members_without_2fa,
+            outside_collaborators,
+            admins,
+        ) = tokio::try_join!(
+            traced(
+                "organization settings",
+                client.get_json::<OrgResponse>(&org_path),
+            ),
+            traced(
+                "release immutability policy",
+                client.get_json::<ImmutableReleasesResponse>(&immut_path),
+            ),
+            traced(
+                "fork PR contributor approval policy",
+                client.get_json::<ForkPrContributorApprovalResponse>(&fork_pr_path),
+            ),
+            traced(
+                "default workflow token permissions",
+                client.get_json::<WorkflowPermsResponse>(&wf_perms_path),
+            ),
+            traced(
+                "default code security configuration",
+                client.get_json::<Vec<SecurityConfigDefault>>(&sec_defaults_path),
+            ),
+            traced(
+                "members without 2FA",
+                fetch_logins(client, &members_2fa_path),
+            ),
+            traced(
+                "outside collaborators",
+                fetch_outside_collaborators(client, org),
+            ),
+            traced("organization admins", fetch_logins(client, &admins_path)),
+        )?;
+
+        let (two_factor_required, default_repository_permission) = match org_resp {
             Fetch::Ok(o) => {
                 let tfa = match o.two_factor_requirement_enabled {
                     Some(true) => TwoFactorState::Required,
@@ -158,13 +208,7 @@ impl OrgContext {
             _ => (TwoFactorState::Unknown, DefaultRepoPermissionState::Unknown),
         };
 
-        step("release immutability policy");
-        let release_immutability = match client
-            .get_json::<ImmutableReleasesResponse>(&format!(
-                "/orgs/{org}/settings/immutable-releases"
-            ))
-            .await?
-        {
+        let release_immutability = match immut_resp {
             Fetch::Ok(r) => match r.enforced_repositories.as_deref() {
                 Some("all") => ReleaseImmutabilityState::All,
                 Some("selected") => ReleaseImmutabilityState::Selected,
@@ -174,13 +218,7 @@ impl OrgContext {
             _ => ReleaseImmutabilityState::Unknown,
         };
 
-        step("fork PR contributor approval policy");
-        let fork_pr_contributor_approval = match client
-            .get_json::<ForkPrContributorApprovalResponse>(&format!(
-                "/orgs/{org}/actions/permissions/fork-pr-contributor-approval"
-            ))
-            .await?
-        {
+        let fork_pr_contributor_approval = match fork_pr_resp {
             Fetch::Ok(r) => match r.approval_policy.as_deref() {
                 Some("all_external_contributors") => {
                     ForkPrContributorApprovalState::AllExternalContributors
@@ -197,11 +235,7 @@ impl OrgContext {
             _ => ForkPrContributorApprovalState::Unknown,
         };
 
-        step("default workflow token permissions");
-        let workflow_token = match client
-            .get_json::<WorkflowPermsResponse>(&format!("/orgs/{org}/actions/permissions/workflow"))
-            .await?
-        {
+        let workflow_token = match wf_perms_resp {
             Fetch::Ok(w) => match w.default_workflow_permissions.as_deref() {
                 Some("read") => WorkflowTokenState::Read,
                 Some(_) => WorkflowTokenState::Write,
@@ -210,14 +244,8 @@ impl OrgContext {
             _ => WorkflowTokenState::Unknown,
         };
 
-        step("default code security configuration");
         let (secret_scanning_default, push_protection_default, dependabot_alerts_default) =
-            match client
-                .get_json::<Vec<SecurityConfigDefault>>(&format!(
-                    "/orgs/{org}/code-security/configurations/defaults"
-                ))
-                .await?
-            {
+            match sec_defaults_resp {
                 Fetch::Ok(defaults) => {
                     let chosen = defaults
                         .into_iter()
@@ -246,14 +274,6 @@ impl OrgContext {
                     FeatureDefaultState::Unknown,
                 ),
             };
-
-        step("members without 2FA");
-        let members_without_2fa =
-            fetch_logins(client, &format!("/orgs/{org}/members?filter=2fa_disabled")).await?;
-        step("outside collaborators");
-        let outside_collaborators = fetch_outside_collaborators(client, org).await?;
-        step("organization admins");
-        let admins = fetch_logins(client, &format!("/orgs/{org}/members?role=admin")).await?;
 
         Ok(Self {
             two_factor_required,
@@ -325,16 +345,19 @@ impl CollaboratorPerms {
 }
 
 async fn fetch_outside_collaborators(client: &Client, org: &str) -> Result<MemberList> {
-    let all = fetch_logins(client, &format!("/orgs/{org}/outside_collaborators")).await?;
+    let outside_path = format!("/orgs/{org}/outside_collaborators");
+    let repos_path = format!("/orgs/{org}/repos?type=all");
+    let (all, repos_resp) = tokio::try_join!(
+        fetch_logins(client, &outside_path),
+        client.get_paginated::<RepoBrief>(&repos_path),
+    )?;
+
     let logins = match all {
         MemberList::Ok(v) if !v.is_empty() => v,
         other => return Ok(other),
     };
 
-    let repos: Vec<RepoBrief> = match client
-        .get_paginated::<RepoBrief>(&format!("/orgs/{org}/repos?type=all"))
-        .await?
-    {
+    let repos: Vec<RepoBrief> = match repos_resp {
         Fetch::Ok(v) => v.into_iter().filter(|r| !r.fork && !r.archived).collect(),
         Fetch::Forbidden | Fetch::NotFound => return Ok(MemberList::Ok(logins)),
     };

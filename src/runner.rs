@@ -6,10 +6,10 @@ use crate::checks::orgs::{
     workflow_token as org_workflow_token,
 };
 use crate::checks::repos::{
-    RepoContext, admin_enforcement, branch_protection, context::RepoListing, dependabot_alerts,
-    dependabot_config, direct_collaborators, immutable_branch, linear_history, pinned_actions,
-    pr_reviews, pull_request_target, push_protection, secret_scanning, security_md, signed_commits,
-    webhooks, workflow_permissions, workflow_token,
+    RepoContext, admin_enforcement, context::RepoListing, dependabot_alerts, dependabot_config,
+    direct_collaborators, immutable_branch, linear_history, pinned_actions, pr_reviews,
+    protected_release_branches, pull_request_target, push_protection, secret_scanning, security_md,
+    signed_commits, webhooks, workflow_permissions, workflow_token,
 };
 use crate::support::github::{Client, Fetch};
 use crate::support::outcome::{CheckOutcome, Status};
@@ -319,10 +319,10 @@ pub fn render_repo_checks(contexts: &[RepoContext], _verbose: bool) {
 
     let columns: &[RepoCheck] = &[
         (
-            "branch_protection",
-            branch_protection::COLUMN,
-            branch_protection::DESCRIPTION,
-            branch_protection::check,
+            "protected_release_branches",
+            protected_release_branches::COLUMN,
+            protected_release_branches::DESCRIPTION,
+            protected_release_branches::check,
         ),
         (
             "signed_commits",

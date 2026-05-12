@@ -5,6 +5,9 @@ pub const COLUMN: &str = "signed";
 pub const DESCRIPTION: &str = "release branches require signed commits (Settings → Branches → ruleset → Require signed commits)";
 
 pub fn check(ctx: &RepoContext) -> CheckOutcome {
+    if !ctx.private {
+        return CheckOutcome::skipped("n/a");
+    }
     ctx.branch_protections.aggregate(|state| match state {
         BranchProtectionState::Protected { signed_commits, .. } => {
             if *signed_commits {
