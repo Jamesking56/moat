@@ -4,6 +4,10 @@ use crate::support::workflows::{self, PermissionsBlock, WorkflowsState};
 
 pub const COLUMN: &str = "perms";
 pub const DESCRIPTION: &str = "every workflow declares a top-level `permissions:` block that is not write-all (per-workflow least privilege)";
+pub const HOW_TO_FIX: &str =
+    "in each `.github/workflows/*.yml`, add a top-level `permissions:` block listing only the scopes the workflow actually needs (`contents: read`, etc.)";
+pub const WHY_ENABLE: &str =
+    "without a declared `permissions:` block (or with `write-all`), every step in the workflow — including third-party actions — runs with full repo write access, turning any compromised action into a code-push primitive.";
 
 pub fn check(ctx: &RepoContext) -> CheckOutcome {
     let workflows = match &ctx.workflows {

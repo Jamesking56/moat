@@ -29,6 +29,7 @@ owo-colors = "4"
 futures = "0.3"
 serde_yaml = "0.9"
 toml = "0.8"
+terminal_size = "0.4"
 
 [dev-dependencies]
 wiremock = "0.6"

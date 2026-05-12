@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
                 }
                 runner::print_repo_header(owner, repo);
                 let contexts = runner::fetch_single_repo_context(&client, owner, repo).await?;
-                runner::render_repo_checks(&contexts, verbose);
+                runner::render_repo_checks(&contexts, None, Vec::new(), verbose);
             } else {
                 let kind = runner::detect_account(&client, &account).await?;
                 runner::print_header(&account, kind);
@@ -49,10 +49,15 @@ async fn main() -> Result<()> {
                     None
                 };
 
+                let mut suppressions: Option<runner::Suppressions> = None;
+                let mut org_findings: Vec<runner::Finding> = Vec::new();
                 if do_org {
                     match (kind, &org_ctx) {
                         (AccountKind::Organization, Some(ctx)) => {
-                            runner::render_org_checks(ctx, verbose);
+                            let (s, f) =
+                                runner::render_org_checks(ctx, repo_contexts.as_deref(), verbose);
+                            suppressions = Some(s);
+                            org_findings = f;
                         }
                         (AccountKind::User, _) => {
                             println!("  {}", "ORGANIZATION".bold());
@@ -65,8 +70,20 @@ async fn main() -> Result<()> {
                         _ => {}
                     }
                 }
-                if let Some(contexts) = repo_contexts {
-                    runner::render_repo_checks(&contexts, verbose);
+                if let Some(contexts) = repo_contexts.as_deref() {
+                    runner::render_repo_checks(
+                        contexts,
+                        suppressions.as_ref(),
+                        org_findings,
+                        verbose,
+                    );
+                } else if !org_findings.is_empty() {
+                    runner::render_findings_panel(&org_findings, 0, verbose);
+                }
+                if matches!(kind, AccountKind::Organization)
+                    && let Some(ctx) = org_ctx.as_ref()
+                {
+                    runner::render_org_inventory(ctx, repo_contexts.as_deref(), verbose);
                 }
             }
         }

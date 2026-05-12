@@ -1,8 +1,8 @@
 use crate::support::github::{Client, Fetch};
 use crate::support::outcome::CheckOutcome;
+use crate::support::panel;
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
-use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -13,7 +13,7 @@ where
     F: std::future::Future<Output = T>,
 {
     let out = fut.await;
-    eprintln!("  {} {}", "→".bright_black(), label.dimmed());
+    panel::progress(label);
     out
 }
 

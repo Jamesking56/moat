@@ -1,10 +1,10 @@
 use crate::config::Config;
 use crate::support::github::{Client, Fetch, Fetch403};
 use crate::support::outcome::CheckOutcome;
+use crate::support::panel;
 use crate::support::workflows::{self, WorkflowsState};
 use anyhow::Result;
 use futures::future::try_join_all;
-use owo_colors::OwoColorize;
 use serde::Deserialize;
 
 async fn traced<F, T>(repo: &str, label: &str, fut: F) -> T
@@ -12,11 +12,7 @@ where
     F: std::future::Future<Output = T>,
 {
     let out = fut.await;
-    eprintln!(
-        "  {} {}",
-        "→".bright_black(),
-        format!("{repo}: {label}").bright_black()
-    );
+    panel::progress(&format!("{repo}: {label}"));
     out
 }
 

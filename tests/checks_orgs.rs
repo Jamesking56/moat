@@ -39,7 +39,7 @@ fn two_factor_required_passes_when_required() {
     );
     let o = two_factor_required::check(&c);
     assert_eq!(o.status, Status::Pass);
-    assert_eq!(o.summary, "required");
+    assert_eq!(o.summary, "required for every member");
 }
 
 #[test]

@@ -138,7 +138,7 @@ async fn run_org_checks_completes_against_mocked_server() {
     stub_org(&server, "acme").await;
     let client = Client::with_base_url("t".into(), server.uri()).unwrap();
     let ctx = runner::fetch_org_context(&client, "acme").await.unwrap();
-    runner::render_org_checks(&ctx, false);
+    runner::render_org_checks(&ctx, None, false);
 }
 
 #[tokio::test]
@@ -149,7 +149,7 @@ async fn run_repo_checks_completes_against_mocked_server() {
     let contexts = runner::fetch_repo_contexts(&client, "acme", AccountKind::Organization)
         .await
         .unwrap();
-    runner::render_repo_checks(&contexts, false);
+    runner::render_repo_checks(&contexts, None, false);
 }
 
 #[tokio::test]
