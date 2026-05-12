@@ -1,12 +1,16 @@
 use crate::checks::orgs::{
-    OrgContext, admins, default_repo_permission, members_without_2fa, outside_collaborators,
-    release_immutability, two_factor_required,
+    OrgContext, context::MemberList, default_repo_permission,
+    dependabot_alerts as org_dependabot_alerts, fork_pr_contributor_approval, members_without_2fa,
+    push_protection as org_push_protection, release_immutability,
+    secret_scanning as org_secret_scanning, two_factor_required,
+    workflow_token as org_workflow_token,
 };
 use crate::checks::repos::{
-    RepoContext, admin_enforcement, branch_history, branch_protection, codeowners,
-    context::RepoListing, dependabot_alerts, pinned_actions, pr_reviews, pull_request_target,
-    push_protection, secret_scanning, security_md, signed_commits, webhooks, workflow_permissions,
-    workflow_token,
+    RepoContext, admin_enforcement, branch_protection, context::RepoListing, dependabot_alerts,
+    dependabot_config, direct_collaborators, immutable_branch, linear_history, pinned_actions,
+    pr_reviews,
+    pull_request_target, push_protection, secret_scanning, security_md, signed_commits, webhooks,
+    workflow_permissions, workflow_token,
 };
 use crate::support::github::{Client, Fetch};
 use crate::support::outcome::{CheckOutcome, Status};
@@ -83,40 +87,61 @@ pub async fn detect_account(client: &Client, name: &str) -> Result<AccountKind> 
     }
 }
 
-pub async fn run_org_checks(client: &Client, org: &str, verbose: bool) -> Result<()> {
+pub async fn fetch_org_context(client: &Client, org: &str) -> Result<OrgContext> {
     eprintln!(
         "  {} fetching {}",
         "→".bright_black(),
         "organization".bold()
     );
-    let ctx = OrgContext::fetch(client, org).await?;
+    OrgContext::fetch(client, org).await
+}
 
+pub fn render_org_checks(ctx: &OrgContext, verbose: bool) {
     let results = [
         (
             two_factor_required::NAME,
             two_factor_required::DESCRIPTION,
-            two_factor_required::check(&ctx),
+            two_factor_required::check(ctx),
         ),
         (
             members_without_2fa::NAME,
             members_without_2fa::DESCRIPTION,
-            members_without_2fa::check(&ctx),
+            members_without_2fa::check(ctx),
         ),
-        (
-            outside_collaborators::NAME,
-            outside_collaborators::DESCRIPTION,
-            outside_collaborators::check(&ctx),
-        ),
-        (admins::NAME, admins::DESCRIPTION, admins::check(&ctx)),
         (
             default_repo_permission::NAME,
             default_repo_permission::DESCRIPTION,
-            default_repo_permission::check(&ctx),
+            default_repo_permission::check(ctx),
         ),
         (
             release_immutability::NAME,
             release_immutability::DESCRIPTION,
-            release_immutability::check(&ctx),
+            release_immutability::check(ctx),
+        ),
+        (
+            fork_pr_contributor_approval::NAME,
+            fork_pr_contributor_approval::DESCRIPTION,
+            fork_pr_contributor_approval::check(ctx),
+        ),
+        (
+            org_workflow_token::NAME,
+            org_workflow_token::DESCRIPTION,
+            org_workflow_token::check(ctx),
+        ),
+        (
+            org_secret_scanning::NAME,
+            org_secret_scanning::DESCRIPTION,
+            org_secret_scanning::check(ctx),
+        ),
+        (
+            org_push_protection::NAME,
+            org_push_protection::DESCRIPTION,
+            org_push_protection::check(ctx),
+        ),
+        (
+            org_dependabot_alerts::NAME,
+            org_dependabot_alerts::DESCRIPTION,
+            org_dependabot_alerts::check(ctx),
         ),
     ];
 
@@ -152,6 +177,28 @@ pub async fn run_org_checks(client: &Client, org: &str, verbose: bool) -> Result
     }
     println!();
 
+    let inventory: &[(&str, &MemberList)] = &[
+        ("Outside collaborators", &ctx.outside_collaborators),
+        ("Org admins", &ctx.admins),
+    ];
+    let inv_width = inventory
+        .iter()
+        .map(|(n, _)| n.chars().count())
+        .max()
+        .unwrap_or(0);
+    println!("  {}", "INVENTORY".bold());
+    for (name, list) in inventory {
+        let pad = " ".repeat(inv_width.saturating_sub(name.chars().count()));
+        let (summary, items): (String, &[String]) = match list {
+            MemberList::NoPermission => ("(requires org admin token)".to_string(), &[]),
+            MemberList::Ok(v) if v.is_empty() => ("none".to_string(), &[]),
+            MemberList::Ok(v) => (v.len().to_string(), v.as_slice()),
+        };
+        println!("    {}{}  {}", name.bold(), pad, summary.dimmed());
+        render_items(items, inv_width + 6, verbose);
+    }
+    println!();
+
     println!("  {}", "CHECKS".bold());
     for (name, description, _) in &results {
         let pad = " ".repeat(name_width.saturating_sub(name.chars().count()));
@@ -171,7 +218,6 @@ pub async fn run_org_checks(client: &Client, org: &str, verbose: bool) -> Result
         "·".dimmed(),
     );
     println!();
-    Ok(())
 }
 
 fn render_items(items: &[String], indent: usize, verbose: bool) {
@@ -196,12 +242,11 @@ fn render_items(items: &[String], indent: usize, verbose: bool) {
     }
 }
 
-pub async fn run_repo_checks(
+pub async fn fetch_repo_contexts(
     client: &Client,
     account: &str,
     kind: AccountKind,
-    verbose: bool,
-) -> Result<()> {
+) -> Result<Vec<RepoContext>> {
     let listing_path = match kind {
         AccountKind::Organization => format!("/orgs/{account}/repos?type=all"),
         AccountKind::User => format!("/users/{account}/repos"),
@@ -218,15 +263,14 @@ pub async fn run_repo_checks(
         .into_iter()
         .filter(|r| !r.fork && !r.archived)
         .collect();
-    render_repo_checks(client, account, listings, verbose).await
+    fetch_contexts(client, account, listings).await
 }
 
-pub async fn run_single_repo_check(
+pub async fn fetch_single_repo_context(
     client: &Client,
     owner: &str,
     repo: &str,
-    verbose: bool,
-) -> Result<()> {
+) -> Result<Vec<RepoContext>> {
     let listing: RepoListing = match client
         .get_json::<RepoListing>(&format!("/repos/{owner}/{repo}"))
         .await?
@@ -237,15 +281,14 @@ pub async fn run_single_repo_check(
         }
         Fetch::NotFound => bail!("no repository named `{owner}/{repo}` was found"),
     };
-    render_repo_checks(client, owner, vec![listing], verbose).await
+    fetch_contexts(client, owner, vec![listing]).await
 }
 
-async fn render_repo_checks(
+async fn fetch_contexts(
     client: &Client,
     account: &str,
     listings: Vec<RepoListing>,
-    _verbose: bool,
-) -> Result<()> {
+) -> Result<Vec<RepoContext>> {
     let total = listings.len();
     eprintln!(
         "  {} scanning {} repositories",
@@ -269,6 +312,11 @@ async fn render_repo_checks(
         .await;
 
     contexts.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(contexts)
+}
+
+pub fn render_repo_checks(contexts: &[RepoContext], _verbose: bool) {
+    let total = contexts.len();
 
     let columns: &[RepoCheck] = &[
         (
@@ -320,16 +368,16 @@ async fn render_repo_checks(
             admin_enforcement::check,
         ),
         (
-            "branch_history",
-            branch_history::COLUMN,
-            branch_history::DESCRIPTION,
-            branch_history::check,
+            "immutable_branch",
+            immutable_branch::COLUMN,
+            immutable_branch::DESCRIPTION,
+            immutable_branch::check,
         ),
         (
-            "codeowners",
-            codeowners::COLUMN,
-            codeowners::DESCRIPTION,
-            codeowners::check,
+            "linear_history",
+            linear_history::COLUMN,
+            linear_history::DESCRIPTION,
+            linear_history::check,
         ),
         (
             "pinned_actions",
@@ -356,22 +404,37 @@ async fn render_repo_checks(
             webhooks::check,
         ),
         (
+            "direct_collaborators",
+            direct_collaborators::COLUMN,
+            direct_collaborators::DESCRIPTION,
+            direct_collaborators::check,
+        ),
+        (
             "security_md",
             security_md::COLUMN,
             security_md::DESCRIPTION,
             security_md::check,
         ),
+        (
+            "dependabot_config",
+            dependabot_config::COLUMN,
+            dependabot_config::DESCRIPTION,
+            dependabot_config::check,
+        ),
     ];
 
-    let headers: Vec<&str> = std::iter::once("repo")
+    let headers: Vec<&str> = ["repo", "visibility"]
+        .into_iter()
         .chain(columns.iter().map(|(_, name, _, _)| *name))
         .collect();
 
     let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(contexts.len());
     let mut totals = vec![0usize; columns.len()];
     let mut active = 0usize;
+    let mut total_pass = 0usize;
+    let mut total_fail = 0usize;
 
-    for ctx in &contexts {
+    for ctx in contexts {
         let truncated = render::truncate(&ctx.name, MAX_REPO_NAME);
         let name_cell = if ctx.archived {
             let visible = format!("{truncated} (archived)");
@@ -381,8 +444,14 @@ async fn render_repo_checks(
             Cell::plain(truncated)
         };
 
-        let mut row = Vec::with_capacity(columns.len() + 1);
+        let mut row = Vec::with_capacity(columns.len() + 2);
         row.push(name_cell);
+
+        let visibility = if ctx.private { "private" } else { "public" };
+        row.push(Cell::styled(
+            visibility.to_string(),
+            visibility.dimmed().to_string(),
+        ));
 
         for (i, (id, _, _, run)) in columns.iter().enumerate() {
             let (outcome, disabled) = if ctx.config.is_off(id) {
@@ -390,8 +459,17 @@ async fn render_repo_checks(
             } else {
                 (run(ctx), false)
             };
-            if !ctx.archived && !disabled && outcome.status == Status::Fail {
-                totals[i] += 1;
+            if !ctx.archived && !disabled {
+                match outcome.status {
+                    Status::Fail => {
+                        totals[i] += 1;
+                        total_fail += 1;
+                    }
+                    Status::Pass => {
+                        total_pass += 1;
+                    }
+                    _ => {}
+                }
             }
             let rendered = if ctx.archived || disabled {
                 outcome.summary.dimmed().to_string()
@@ -475,5 +553,18 @@ async fn render_repo_checks(
     println!("    {}", parts.join(&format!("  {}  ", "·".bright_black())));
     println!();
 
-    Ok(())
+    let applicable = total_pass + total_fail;
+    let score = if applicable == 0 {
+        100
+    } else {
+        (total_pass * 100) / applicable
+    };
+    let score_str = format!("{score}/100");
+    let colored_score = match score {
+        90..=100 => score_str.green().bold().to_string(),
+        70..=89 => score_str.yellow().bold().to_string(),
+        _ => score_str.red().bold().to_string(),
+    };
+    println!("  {}   {}", "MOAT SCORE".bold(), colored_score);
+    println!();
 }

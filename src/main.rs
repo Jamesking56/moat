@@ -28,7 +28,8 @@ async fn main() -> Result<()> {
                     );
                 }
                 runner::print_repo_header(owner, repo);
-                runner::run_single_repo_check(&client, owner, repo, verbose).await?;
+                let contexts = runner::fetch_single_repo_context(&client, owner, repo).await?;
+                runner::render_repo_checks(&contexts, verbose);
             } else {
                 let kind = runner::detect_account(&client, &account).await?;
                 runner::print_header(&account, kind);
@@ -36,12 +37,24 @@ async fn main() -> Result<()> {
                 let do_org = matches!(only, None | Some(cli::Only::Org));
                 let do_repos = matches!(only, None | Some(cli::Only::Repos));
 
+                let org_ctx = if do_org && matches!(kind, AccountKind::Organization) {
+                    Some(runner::fetch_org_context(&client, &account).await?)
+                } else {
+                    None
+                };
+
+                let repo_contexts = if do_repos {
+                    Some(runner::fetch_repo_contexts(&client, &account, kind).await?)
+                } else {
+                    None
+                };
+
                 if do_org {
-                    match kind {
-                        AccountKind::Organization => {
-                            runner::run_org_checks(&client, &account, verbose).await?
+                    match (kind, &org_ctx) {
+                        (AccountKind::Organization, Some(ctx)) => {
+                            runner::render_org_checks(ctx, verbose);
                         }
-                        AccountKind::User => {
+                        (AccountKind::User, _) => {
                             println!("  {}", "ORGANIZATION".bold());
                             println!(
                                 "    {}",
@@ -49,10 +62,11 @@ async fn main() -> Result<()> {
                             );
                             println!();
                         }
+                        _ => {}
                     }
                 }
-                if do_repos {
-                    runner::run_repo_checks(&client, &account, kind, verbose).await?;
+                if let Some(contexts) = repo_contexts {
+                    runner::render_repo_checks(&contexts, verbose);
                 }
             }
         }

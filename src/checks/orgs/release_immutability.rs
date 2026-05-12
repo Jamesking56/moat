@@ -6,8 +6,9 @@ pub const DESCRIPTION: &str = "org enforces immutable releases so published rele
 
 pub fn check(ctx: &OrgContext) -> CheckOutcome {
     match ctx.release_immutability {
-        ReleaseImmutabilityState::Enabled => CheckOutcome::pass("enabled"),
-        ReleaseImmutabilityState::Disabled => CheckOutcome::fail("NOT enabled"),
+        ReleaseImmutabilityState::All => CheckOutcome::pass("enforced on all repos"),
+        ReleaseImmutabilityState::Selected => CheckOutcome::warn("enforced on selected repos only"),
+        ReleaseImmutabilityState::None => CheckOutcome::fail("NOT enforced"),
         ReleaseImmutabilityState::Unknown => CheckOutcome::skipped("unknown"),
     }
 }

@@ -1,15 +1,15 @@
-use super::context::{BranchProtectionState, RepoContext};
+use super::context::{BranchEval, BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
 pub const COLUMN: &str = "protected branch";
 pub const DESCRIPTION: &str =
-    "default branch has a protection rule (Settings → Branches → Add branch ruleset)";
+    "release branches have a protection rule (Settings → Branches → Add branch ruleset)";
 
 pub fn check(ctx: &RepoContext) -> CheckOutcome {
-    match ctx.branch_protection {
-        BranchProtectionState::Protected { .. } => CheckOutcome::pass("✓"),
-        BranchProtectionState::Unprotected => CheckOutcome::fail("✗"),
-        BranchProtectionState::NoDefaultBranch => CheckOutcome::skipped("—"),
-        BranchProtectionState::NoPermission => CheckOutcome::skipped("?"),
-    }
+    ctx.branch_protections.aggregate(|state| match state {
+        BranchProtectionState::Protected { .. } => BranchEval::Pass,
+        BranchProtectionState::Unprotected => BranchEval::Fail(Vec::new()),
+        BranchProtectionState::NoPermission => BranchEval::Unknown,
+        BranchProtectionState::PlanGated => BranchEval::PlanGated,
+    })
 }

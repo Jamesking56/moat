@@ -1,13 +1,16 @@
 use super::context::{BranchEval, BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const COLUMN: &str = "signed";
-pub const DESCRIPTION: &str = "release branches require signed commits (Settings → Branches → ruleset → Require signed commits)";
+pub const COLUMN: &str = "linear";
+pub const DESCRIPTION: &str = "release branches require linear history (Settings → Branches → ruleset → Require linear history)";
 
 pub fn check(ctx: &RepoContext) -> CheckOutcome {
     ctx.branch_protections.aggregate(|state| match state {
-        BranchProtectionState::Protected { signed_commits, .. } => {
-            if *signed_commits {
+        BranchProtectionState::Protected {
+            required_linear_history,
+            ..
+        } => {
+            if *required_linear_history {
                 BranchEval::Pass
             } else {
                 BranchEval::Fail(Vec::new())

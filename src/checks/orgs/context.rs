@@ -2,8 +2,13 @@ use crate::support::github::{Client, Fetch};
 use crate::support::outcome::CheckOutcome;
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
+use owo_colors::OwoColorize;
 use serde::Deserialize;
 use std::collections::BTreeMap;
+
+fn step(label: &str) {
+    eprintln!("  {} {}", "→".bright_black(), label.dimmed());
+}
 
 const COLLABORATOR_CONCURRENCY: usize = 12;
 
@@ -14,6 +19,35 @@ pub struct OrgContext {
     pub admins: MemberList,
     pub default_repository_permission: DefaultRepoPermissionState,
     pub release_immutability: ReleaseImmutabilityState,
+    pub fork_pr_contributor_approval: ForkPrContributorApprovalState,
+    pub workflow_token: WorkflowTokenState,
+    pub secret_scanning_default: FeatureDefaultState,
+    pub push_protection_default: FeatureDefaultState,
+    pub dependabot_alerts_default: FeatureDefaultState,
+}
+
+#[derive(Clone, Copy)]
+pub enum WorkflowTokenState {
+    Read,
+    Write,
+    Unknown,
+}
+
+#[derive(Clone, Copy)]
+pub enum FeatureDefaultState {
+    Enabled,
+    Disabled,
+    NotSet,
+    Unknown,
+}
+
+#[derive(Clone, Copy)]
+pub enum ForkPrContributorApprovalState {
+    AllExternalContributors,
+    FirstTimeContributors,
+    FirstTimeContributorsNewToGithub,
+    Other,
+    Unknown,
 }
 
 #[derive(Clone, Copy)]
@@ -25,8 +59,9 @@ pub enum TwoFactorState {
 
 #[derive(Clone, Copy)]
 pub enum ReleaseImmutabilityState {
-    Enabled,
-    Disabled,
+    All,
+    Selected,
+    None,
     Unknown,
 }
 
@@ -62,7 +97,34 @@ impl MemberList {
 struct OrgResponse {
     two_factor_requirement_enabled: Option<bool>,
     default_repository_permission: Option<String>,
-    immutable_releases: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct ImmutableReleasesResponse {
+    enforced_repositories: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ForkPrContributorApprovalResponse {
+    approval_policy: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WorkflowPermsResponse {
+    default_workflow_permissions: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SecurityConfigDefault {
+    default_for_new_repos: Option<String>,
+    configuration: Option<SecurityConfigInner>,
+}
+
+#[derive(Deserialize)]
+struct SecurityConfigInner {
+    secret_scanning: Option<String>,
+    secret_scanning_push_protection: Option<String>,
+    dependabot_alerts: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -72,42 +134,125 @@ struct User {
 
 impl OrgContext {
     pub async fn fetch(client: &Client, org: &str) -> Result<Self> {
-        let (two_factor_required, default_repository_permission, release_immutability) =
+        step("organization settings");
+        let (two_factor_required, default_repository_permission) = match client
+            .get_json::<OrgResponse>(&format!("/orgs/{org}"))
+            .await?
+        {
+            Fetch::Ok(o) => {
+                let tfa = match o.two_factor_requirement_enabled {
+                    Some(true) => TwoFactorState::Required,
+                    Some(false) => TwoFactorState::NotRequired,
+                    None => TwoFactorState::Unknown,
+                };
+                let perm = match o.default_repository_permission.as_deref() {
+                    Some("none") => DefaultRepoPermissionState::None,
+                    Some("read") => DefaultRepoPermissionState::Read,
+                    Some("write") => DefaultRepoPermissionState::Write,
+                    Some("admin") => DefaultRepoPermissionState::Admin,
+                    Some(other) => DefaultRepoPermissionState::Other(other.to_string()),
+                    None => DefaultRepoPermissionState::Unknown,
+                };
+                (tfa, perm)
+            }
+            _ => (TwoFactorState::Unknown, DefaultRepoPermissionState::Unknown),
+        };
+
+        step("release immutability policy");
+        let release_immutability = match client
+            .get_json::<ImmutableReleasesResponse>(&format!(
+                "/orgs/{org}/settings/immutable-releases"
+            ))
+            .await?
+        {
+            Fetch::Ok(r) => match r.enforced_repositories.as_deref() {
+                Some("all") => ReleaseImmutabilityState::All,
+                Some("selected") => ReleaseImmutabilityState::Selected,
+                Some("none") => ReleaseImmutabilityState::None,
+                _ => ReleaseImmutabilityState::Unknown,
+            },
+            _ => ReleaseImmutabilityState::Unknown,
+        };
+
+        step("fork PR contributor approval policy");
+        let fork_pr_contributor_approval = match client
+            .get_json::<ForkPrContributorApprovalResponse>(&format!(
+                "/orgs/{org}/actions/permissions/fork-pr-contributor-approval"
+            ))
+            .await?
+        {
+            Fetch::Ok(r) => match r.approval_policy.as_deref() {
+                Some("all_external_contributors") => {
+                    ForkPrContributorApprovalState::AllExternalContributors
+                }
+                Some("first_time_contributors") => {
+                    ForkPrContributorApprovalState::FirstTimeContributors
+                }
+                Some("first_time_contributors_new_to_github") => {
+                    ForkPrContributorApprovalState::FirstTimeContributorsNewToGithub
+                }
+                Some(_) => ForkPrContributorApprovalState::Other,
+                None => ForkPrContributorApprovalState::Unknown,
+            },
+            _ => ForkPrContributorApprovalState::Unknown,
+        };
+
+        step("default workflow token permissions");
+        let workflow_token = match client
+            .get_json::<WorkflowPermsResponse>(&format!("/orgs/{org}/actions/permissions/workflow"))
+            .await?
+        {
+            Fetch::Ok(w) => match w.default_workflow_permissions.as_deref() {
+                Some("read") => WorkflowTokenState::Read,
+                Some(_) => WorkflowTokenState::Write,
+                None => WorkflowTokenState::Unknown,
+            },
+            _ => WorkflowTokenState::Unknown,
+        };
+
+        step("default code security configuration");
+        let (secret_scanning_default, push_protection_default, dependabot_alerts_default) =
             match client
-                .get_json::<OrgResponse>(&format!("/orgs/{org}"))
+                .get_json::<Vec<SecurityConfigDefault>>(&format!(
+                    "/orgs/{org}/code-security/configurations/defaults"
+                ))
                 .await?
             {
-                Fetch::Ok(o) => {
-                    let tfa = match o.two_factor_requirement_enabled {
-                        Some(true) => TwoFactorState::Required,
-                        Some(false) => TwoFactorState::NotRequired,
-                        None => TwoFactorState::Unknown,
-                    };
-                    let perm = match o.default_repository_permission.as_deref() {
-                        Some("none") => DefaultRepoPermissionState::None,
-                        Some("read") => DefaultRepoPermissionState::Read,
-                        Some("write") => DefaultRepoPermissionState::Write,
-                        Some("admin") => DefaultRepoPermissionState::Admin,
-                        Some(other) => DefaultRepoPermissionState::Other(other.to_string()),
-                        None => DefaultRepoPermissionState::Unknown,
-                    };
-                    let immutability = match o.immutable_releases {
-                        Some(true) => ReleaseImmutabilityState::Enabled,
-                        Some(false) => ReleaseImmutabilityState::Disabled,
-                        None => ReleaseImmutabilityState::Unknown,
-                    };
-                    (tfa, perm, immutability)
+                Fetch::Ok(defaults) => {
+                    let chosen = defaults
+                        .into_iter()
+                        .find(|d| {
+                            d.default_for_new_repos
+                                .as_deref()
+                                .is_some_and(|v| v != "none")
+                        })
+                        .and_then(|d| d.configuration);
+                    match chosen {
+                        Some(c) => (
+                            feature_default(c.secret_scanning.as_deref()),
+                            feature_default(c.secret_scanning_push_protection.as_deref()),
+                            feature_default(c.dependabot_alerts.as_deref()),
+                        ),
+                        None => (
+                            FeatureDefaultState::NotSet,
+                            FeatureDefaultState::NotSet,
+                            FeatureDefaultState::NotSet,
+                        ),
+                    }
                 }
                 _ => (
-                    TwoFactorState::Unknown,
-                    DefaultRepoPermissionState::Unknown,
-                    ReleaseImmutabilityState::Unknown,
+                    FeatureDefaultState::Unknown,
+                    FeatureDefaultState::Unknown,
+                    FeatureDefaultState::Unknown,
                 ),
             };
 
+        step("members without 2FA");
         let members_without_2fa =
             fetch_logins(client, &format!("/orgs/{org}/members?filter=2fa_disabled")).await?;
+        step("outside collaborators");
         let outside_collaborators = fetch_outside_collaborators(client, org).await?;
+        step("organization admins");
         let admins = fetch_logins(client, &format!("/orgs/{org}/members?role=admin")).await?;
 
         Ok(Self {
@@ -117,7 +262,21 @@ impl OrgContext {
             admins,
             default_repository_permission,
             release_immutability,
+            fork_pr_contributor_approval,
+            workflow_token,
+            secret_scanning_default,
+            push_protection_default,
+            dependabot_alerts_default,
         })
+    }
+}
+
+fn feature_default(value: Option<&str>) -> FeatureDefaultState {
+    match value {
+        Some("enabled") => FeatureDefaultState::Enabled,
+        Some("disabled") => FeatureDefaultState::Disabled,
+        Some("not_set") | None => FeatureDefaultState::NotSet,
+        Some(_) => FeatureDefaultState::Unknown,
     }
 }
 

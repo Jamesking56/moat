@@ -7,6 +7,7 @@ pub const FILE_NAME: &str = "moat.toml";
 #[derive(Debug, Default, Clone)]
 pub struct Config {
     checks: HashMap<String, CheckState>,
+    release_branches: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +20,8 @@ pub enum CheckState {
 struct RawConfig {
     #[serde(default)]
     checks: HashMap<String, String>,
+    #[serde(default)]
+    release_branches: Vec<String>,
 }
 
 impl Config {
@@ -35,11 +38,18 @@ impl Config {
             };
             checks.insert(id, state);
         }
-        Ok(Self { checks })
+        Ok(Self {
+            checks,
+            release_branches: raw.release_branches,
+        })
     }
 
     pub fn is_off(&self, check_id: &str) -> bool {
         matches!(self.checks.get(check_id), Some(CheckState::Off))
+    }
+
+    pub fn release_branches(&self) -> &[String] {
+        &self.release_branches
     }
 }
 
@@ -59,7 +69,6 @@ mod tests {
         .unwrap();
         assert!(cfg.is_off("signed_commits"));
         assert!(!cfg.is_off("pinned_actions"));
-        assert!(!cfg.is_off("codeowners"));
     }
 
     #[test]

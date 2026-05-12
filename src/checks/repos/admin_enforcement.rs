@@ -1,20 +1,20 @@
-use super::context::{BranchProtectionState, RepoContext};
+use super::context::{BranchEval, BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
 pub const COLUMN: &str = "admins";
-pub const DESCRIPTION: &str = "branch protection on the default branch is enforced on admins (Settings → Branches → ruleset → Do not allow bypassing)";
+pub const DESCRIPTION: &str = "branch protection on release branches is enforced on admins (Settings → Branches → ruleset → Do not allow bypassing)";
 
 pub fn check(ctx: &RepoContext) -> CheckOutcome {
-    match ctx.branch_protection {
+    ctx.branch_protections.aggregate(|state| match state {
         BranchProtectionState::Protected { enforce_admins, .. } => {
-            if enforce_admins {
-                CheckOutcome::pass("✓")
+            if *enforce_admins {
+                BranchEval::Pass
             } else {
-                CheckOutcome::fail("✗")
+                BranchEval::Fail(Vec::new())
             }
         }
-        BranchProtectionState::Unprotected => CheckOutcome::fail("✗"),
-        BranchProtectionState::NoDefaultBranch => CheckOutcome::skipped("—"),
-        BranchProtectionState::NoPermission => CheckOutcome::skipped("?"),
-    }
+        BranchProtectionState::Unprotected => BranchEval::Fail(Vec::new()),
+        BranchProtectionState::NoPermission => BranchEval::Unknown,
+        BranchProtectionState::PlanGated => BranchEval::PlanGated,
+    })
 }

@@ -1,7 +1,8 @@
 use moat::checks::orgs::context::{
-    DefaultRepoPermissionState, MemberList, OrgContext, ReleaseImmutabilityState, TwoFactorState,
+    DefaultRepoPermissionState, FeatureDefaultState, ForkPrContributorApprovalState, MemberList,
+    OrgContext, ReleaseImmutabilityState, TwoFactorState, WorkflowTokenState,
 };
-use moat::checks::orgs::{admins, members_without_2fa, outside_collaborators, two_factor_required};
+use moat::checks::orgs::{members_without_2fa, two_factor_required};
 use moat::support::github::Client;
 use moat::support::outcome::Status;
 use wiremock::matchers::{method, path, query_param};
@@ -19,7 +20,12 @@ fn ctx(
         outside_collaborators: outside,
         admins,
         default_repository_permission: DefaultRepoPermissionState::Read,
-        release_immutability: ReleaseImmutabilityState::Enabled,
+        release_immutability: ReleaseImmutabilityState::All,
+        fork_pr_contributor_approval: ForkPrContributorApprovalState::AllExternalContributors,
+        workflow_token: WorkflowTokenState::Read,
+        secret_scanning_default: FeatureDefaultState::Enabled,
+        push_protection_default: FeatureDefaultState::Enabled,
+        dependabot_alerts_default: FeatureDefaultState::Enabled,
     }
 }
 
@@ -94,65 +100,6 @@ fn members_without_2fa_skipped_when_no_permission() {
     assert_eq!(members_without_2fa::check(&c).status, Status::Skipped);
 }
 
-#[test]
-fn outside_collaborators_warns_when_present() {
-    let c = ctx(
-        TwoFactorState::Required,
-        MemberList::Ok(vec![]),
-        MemberList::Ok(vec!["x".into()]),
-        MemberList::Ok(vec![]),
-    );
-    assert_eq!(outside_collaborators::check(&c).status, Status::Warn);
-}
-
-#[test]
-fn outside_collaborators_passes_when_none() {
-    let c = ctx(
-        TwoFactorState::Required,
-        MemberList::Ok(vec![]),
-        MemberList::Ok(vec![]),
-        MemberList::Ok(vec![]),
-    );
-    assert_eq!(outside_collaborators::check(&c).status, Status::Pass);
-}
-
-#[test]
-fn admins_fails_when_zero() {
-    let c = ctx(
-        TwoFactorState::Required,
-        MemberList::Ok(vec![]),
-        MemberList::Ok(vec![]),
-        MemberList::Ok(vec![]),
-    );
-    let o = admins::check(&c);
-    assert_eq!(o.status, Status::Fail);
-    assert!(o.summary.contains("no owner"));
-}
-
-#[test]
-fn admins_warns_with_count_when_present() {
-    let c = ctx(
-        TwoFactorState::Required,
-        MemberList::Ok(vec![]),
-        MemberList::Ok(vec![]),
-        MemberList::Ok(vec!["a".into(), "b".into(), "c".into()]),
-    );
-    let o = admins::check(&c);
-    assert_eq!(o.status, Status::Warn);
-    assert_eq!(o.summary, "3");
-}
-
-#[test]
-fn admins_skipped_when_no_permission() {
-    let c = ctx(
-        TwoFactorState::Required,
-        MemberList::Ok(vec![]),
-        MemberList::Ok(vec![]),
-        MemberList::NoPermission,
-    );
-    assert_eq!(admins::check(&c).status, Status::Skipped);
-}
-
 #[tokio::test]
 async fn org_context_fetch_aggregates_all_endpoints() {
     let server = MockServer::start().await;
@@ -162,6 +109,29 @@ async fn org_context_fetch_aggregates_all_endpoints() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "two_factor_requirement_enabled": true
         })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/orgs/acme/actions/permissions/workflow"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "default_workflow_permissions": "read"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/orgs/acme/code-security/configurations/defaults"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {
+                "default_for_new_repos": "all",
+                "configuration": {
+                    "secret_scanning": "enabled",
+                    "secret_scanning_push_protection": "enabled",
+                    "dependabot_alerts": "enabled"
+                }
+            }
+        ])))
         .mount(&server)
         .await;
 
@@ -193,6 +163,19 @@ async fn org_context_fetch_aggregates_all_endpoints() {
     let ctx = OrgContext::fetch(&client, "acme").await.unwrap();
 
     assert!(matches!(ctx.two_factor_required, TwoFactorState::Required));
+    assert!(matches!(ctx.workflow_token, WorkflowTokenState::Read));
+    assert!(matches!(
+        ctx.secret_scanning_default,
+        FeatureDefaultState::Enabled
+    ));
+    assert!(matches!(
+        ctx.push_protection_default,
+        FeatureDefaultState::Enabled
+    ));
+    assert!(matches!(
+        ctx.dependabot_alerts_default,
+        FeatureDefaultState::Enabled
+    ));
     match ctx.members_without_2fa {
         MemberList::Ok(v) => assert_eq!(v, vec!["alice".to_string()]),
         _ => panic!(),

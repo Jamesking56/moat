@@ -137,9 +137,8 @@ async fn run_org_checks_completes_against_mocked_server() {
     let server = MockServer::start().await;
     stub_org(&server, "acme").await;
     let client = Client::with_base_url("t".into(), server.uri()).unwrap();
-    runner::run_org_checks(&client, "acme", false)
-        .await
-        .unwrap();
+    let ctx = runner::fetch_org_context(&client, "acme").await.unwrap();
+    runner::render_org_checks(&ctx, false);
 }
 
 #[tokio::test]
@@ -147,9 +146,10 @@ async fn run_repo_checks_completes_against_mocked_server() {
     let server = MockServer::start().await;
     stub_org(&server, "acme").await;
     let client = Client::with_base_url("t".into(), server.uri()).unwrap();
-    runner::run_repo_checks(&client, "acme", AccountKind::Organization, false)
+    let contexts = runner::fetch_repo_contexts(&client, "acme", AccountKind::Organization)
         .await
         .unwrap();
+    runner::render_repo_checks(&contexts, false);
 }
 
 #[tokio::test]

@@ -49,6 +49,14 @@ pub enum Fetch<T> {
     Forbidden,
 }
 
+#[derive(Debug)]
+pub enum Fetch403<T> {
+    Ok(T),
+    NotFound,
+    Forbidden,
+    PlanGated,
+}
+
 impl Client {
     pub fn new(token: String) -> Result<Self> {
         let base = std::env::var(API_BASE_ENV)
@@ -99,6 +107,31 @@ impl Client {
             StatusCode::NO_CONTENT => Err(anyhow!("expected JSON body, got 204 from {url}")),
             StatusCode::NOT_FOUND => Ok(Fetch::NotFound),
             StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => Ok(Fetch::Forbidden),
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                Err(anyhow!("GET {url} -> {s}: {body}"))
+            }
+        }
+    }
+
+    pub async fn get_json_plan_aware<T: DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Result<Fetch403<T>> {
+        let url = self.url(path);
+        let resp = self.http.get(&url).send().await?;
+        match resp.status() {
+            StatusCode::OK => Ok(Fetch403::Ok(resp.json().await?)),
+            StatusCode::NO_CONTENT => Err(anyhow!("expected JSON body, got 204 from {url}")),
+            StatusCode::NOT_FOUND => Ok(Fetch403::NotFound),
+            StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => {
+                let body = resp.text().await.unwrap_or_default();
+                if body.contains("Upgrade to GitHub") {
+                    Ok(Fetch403::PlanGated)
+                } else {
+                    Ok(Fetch403::Forbidden)
+                }
+            }
             s => {
                 let body = resp.text().await.unwrap_or_default();
                 Err(anyhow!("GET {url} -> {s}: {body}"))

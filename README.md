@@ -50,7 +50,7 @@ moat audit <owner>/<repo>
 For organization audits the token needs:
 
 - `read:org` — list members, admins, outside collaborators, 2FA enforcement
-- `repo` — read branch protection, required reviews, secret scanning, Dependabot alerts, workflow files, repository contents (CODEOWNERS, SECURITY.md), and repository webhooks (the webhook check requires admin access on the repo; it is skipped where the token lacks it)
+- `repo` — read branch protection, required reviews, secret scanning, Dependabot alerts, workflow files, repository contents (SECURITY.md), and repository webhooks (the webhook check requires admin access on the repo; it is skipped where the token lacks it)
 
 A classic PAT or a fine-grained token with the equivalent permissions both work. For user accounts (no org scope), only repo read access is required.
 
@@ -73,7 +73,6 @@ A classic PAT or a fine-grained token with the equivalent permissions both work.
 - Default `GITHUB_TOKEN` workflow permissions (read vs. write)
 - Branch protection is enforced on admins (no bypass on the default branch)
 - Default branch requires linear history and disallows force pushes and deletions
-- `CODEOWNERS` file is present and code-owner review is required on the default branch
 - Every `uses:` in `.github/workflows/*.yml` is pinned to a 40-char commit SHA
 - No workflow combines `pull_request_target` with a checkout of an untrusted PR head ref
 - Every workflow declares a top-level `permissions:` block that is not `write-all`
@@ -87,10 +86,10 @@ A classic PAT or a fine-grained token with the equivalent permissions both work.
 ```toml
 [checks]
 signed_commits = "off"
-codeowners = "off"
+pinned_actions = "off"
 ```
 
-Check IDs match the repository checks listed above (`branch_protection`, `signed_commits`, `pr_reviews`, `workflow_token`, `secret_scanning`, `push_protection`, `dependabot_alerts`, `admin_enforcement`, `branch_history`, `codeowners`, `pinned_actions`, `pull_request_target`, `workflow_permissions`, `webhooks`, `security_md`). Values are `"on"` (default) or `"off"`.
+Check IDs match the repository checks listed above (`branch_protection`, `signed_commits`, `pr_reviews`, `workflow_token`, `secret_scanning`, `push_protection`, `dependabot_alerts`, `admin_enforcement`, `branch_history`, `pinned_actions`, `pull_request_target`, `workflow_permissions`, `webhooks`, `security_md`). Values are `"on"` (default) or `"off"`.
 
 ## Exit codes
 
