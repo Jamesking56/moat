@@ -110,6 +110,10 @@ criteria = "safe-to-run"
 
 [[exemptions.errno]]
 version = "0.3.14"
+criteria = "safe-to-deploy"
+
+[[exemptions.errno]]
+version = "0.3.14"
 criteria = "safe-to-run"
 
 [[exemptions.fastrand]]
@@ -282,6 +286,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.linux-raw-sys]]
 version = "0.12.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.linux-raw-sys]]
+version = "0.12.1"
 criteria = "safe-to-run"
 
 [[exemptions.litemap]]
@@ -390,6 +398,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.rustix]]
 version = "1.1.4"
+criteria = "safe-to-deploy"
+
+[[exemptions.rustix]]
+version = "1.1.4"
 criteria = "safe-to-run"
 
 [[exemptions.rustls]]
@@ -470,6 +482,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.sync_wrapper]]
 version = "1.0.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.terminal_size]]
+version = "0.4.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.thiserror]]

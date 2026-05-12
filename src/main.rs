@@ -1,8 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
-use moat::runner::AccountKind;
-use moat::{cli, runner, support};
-use owo_colors::OwoColorize;
+use moat::runner::{self, AccountKind, CheckContext};
+use moat::{cli, support};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -28,63 +27,68 @@ async fn main() -> Result<()> {
                     );
                 }
                 runner::print_repo_header(owner, repo);
+                support::panel::bump_progress_total(1 + runner::REPO_TICKS);
                 let contexts = runner::fetch_single_repo_context(&client, owner, repo).await?;
-                runner::render_repo_checks(&contexts, None, Vec::new(), verbose);
+                support::panel::finish_progress("repository");
+
+                let ctx = CheckContext {
+                    org: None,
+                    repos: &contexts,
+                };
+                let results = runner::run_checks(&ctx, only);
+                let active_total = contexts.iter().filter(|c| !c.archived).count();
+                runner::render_checks_panel(&results, None, active_total, verbose);
+                runner::render_posture_panel(&results);
             } else {
                 let kind = runner::detect_account(&client, &account).await?;
                 runner::print_header(&account, kind);
 
-                let do_org = matches!(only, None | Some(cli::Only::Org));
+                let do_org = matches!(only, None | Some(cli::Only::Org))
+                    && matches!(kind, AccountKind::Organization);
                 let do_repos = matches!(only, None | Some(cli::Only::Repos));
 
-                let org_ctx = if do_org && matches!(kind, AccountKind::Organization) {
+                let listings = if do_repos {
+                    Some(runner::list_repos(&client, &account, kind).await?)
+                } else {
+                    None
+                };
+
+                let mut total_ticks = 0;
+                if do_org {
+                    total_ticks += runner::ORG_TICKS;
+                }
+                if let Some(l) = &listings {
+                    total_ticks += 1 + runner::REPO_TICKS * l.len();
+                }
+                support::panel::bump_progress_total(total_ticks);
+
+                let org_ctx = if do_org {
                     Some(runner::fetch_org_context(&client, &account).await?)
                 } else {
                     None
                 };
 
-                let repo_contexts = if do_repos {
-                    Some(runner::fetch_repo_contexts(&client, &account, kind).await?)
+                let repo_contexts = if let Some(l) = listings {
+                    Some(runner::fetch_repo_contexts_from(&client, &account, l).await?)
                 } else {
                     None
                 };
 
-                let mut suppressions: Option<runner::Suppressions> = None;
-                let mut org_findings: Vec<runner::Finding> = Vec::new();
-                if do_org {
-                    match (kind, &org_ctx) {
-                        (AccountKind::Organization, Some(ctx)) => {
-                            let (s, f) =
-                                runner::render_org_checks(ctx, repo_contexts.as_deref(), verbose);
-                            suppressions = Some(s);
-                            org_findings = f;
-                        }
-                        (AccountKind::User, _) => {
-                            println!("  {}", "ORGANIZATION".bold());
-                            println!(
-                                "    {}",
-                                "skipped — user accounts have no org-level settings".dimmed()
-                            );
-                            println!();
-                        }
-                        _ => {}
-                    }
-                }
-                if let Some(contexts) = repo_contexts.as_deref() {
-                    runner::render_repo_checks(
-                        contexts,
-                        suppressions.as_ref(),
-                        org_findings,
-                        verbose,
-                    );
-                } else if !org_findings.is_empty() {
-                    runner::render_findings_panel(&org_findings, 0, verbose);
-                }
-                if matches!(kind, AccountKind::Organization)
-                    && let Some(ctx) = org_ctx.as_ref()
-                {
-                    runner::render_org_inventory(ctx, repo_contexts.as_deref(), verbose);
-                }
+                let empty: Vec<_> = Vec::new();
+                let repos_slice = repo_contexts.as_deref().unwrap_or(&empty);
+                support::panel::finish_progress(match kind {
+                    AccountKind::Organization => "organization",
+                    AccountKind::User => "user",
+                });
+
+                let ctx = CheckContext {
+                    org: org_ctx.as_ref(),
+                    repos: repos_slice,
+                };
+                let results = runner::run_checks(&ctx, only);
+                let active_total = repos_slice.iter().filter(|c| !c.archived).count();
+                runner::render_checks_panel(&results, org_ctx.as_ref(), active_total, verbose);
+                runner::render_posture_panel(&results);
             }
         }
     }

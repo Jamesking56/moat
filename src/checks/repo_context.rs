@@ -1,19 +1,19 @@
+use crate::checks::common::{self, CollaboratorEntry};
 use crate::config::Config;
 use crate::support::github::{Client, Fetch, Fetch403};
 use crate::support::outcome::CheckOutcome;
-use crate::support::panel;
 use crate::support::workflows::{self, WorkflowsState};
 use anyhow::Result;
 use futures::future::try_join_all;
 use serde::Deserialize;
 
+pub use crate::checks::common::WorkflowTokenState;
+
 async fn traced<F, T>(repo: &str, label: &str, fut: F) -> T
 where
     F: std::future::Future<Output = T>,
 {
-    let out = fut.await;
-    panel::progress(&format!("{repo}: {label}"));
-    out
+    common::traced(Some(repo), label, fut).await
 }
 
 pub struct RepoContext {
@@ -132,6 +132,26 @@ impl BranchProtections {
             CheckOutcome::pass("✓")
         }
     }
+
+    /// Aggregate a single boolean flag across release branches. `pick` returns
+    /// `Some(true)` to pass, `Some(false)` to fail with no detail, and `None`
+    /// when the state isn't `Protected` (the helper supplies the standard
+    /// mapping for Unprotected/NoPermission/PlanGated).
+    pub fn aggregate_flag<F>(&self, pick: F) -> CheckOutcome
+    where
+        F: Fn(&BranchProtectionState) -> Option<bool>,
+    {
+        self.aggregate(|state| match pick(state) {
+            Some(true) => BranchEval::Pass,
+            Some(false) => BranchEval::Fail(Vec::new()),
+            None => match state {
+                BranchProtectionState::Unprotected => BranchEval::Fail(Vec::new()),
+                BranchProtectionState::NoPermission => BranchEval::Unknown,
+                BranchProtectionState::PlanGated => BranchEval::PlanGated,
+                BranchProtectionState::Protected { .. } => unreachable!(),
+            },
+        })
+    }
 }
 
 pub enum BranchEval {
@@ -139,12 +159,6 @@ pub enum BranchEval {
     Fail(Vec<String>),
     Unknown,
     PlanGated,
-}
-
-pub enum WorkflowTokenState {
-    Read,
-    Write,
-    NoPermission,
 }
 
 pub enum FeatureState {
@@ -257,7 +271,7 @@ impl RepoContext {
                 private: repo.private,
                 default_branch: repo.default_branch,
                 branch_protections: BranchProtections::none(),
-                workflow_token: WorkflowTokenState::NoPermission,
+                workflow_token: WorkflowTokenState::Unavailable,
                 secret_scanning: FeatureState::Unknown,
                 push_protection: FeatureState::Unknown,
                 dependabot_alerts: FeatureState::Unknown,
@@ -465,7 +479,7 @@ async fn fetch_workflow_token(
         {
             Fetch::Ok(w) if w.default_workflow_permissions == "read" => WorkflowTokenState::Read,
             Fetch::Ok(_) => WorkflowTokenState::Write,
-            _ => WorkflowTokenState::NoPermission,
+            _ => WorkflowTokenState::Unavailable,
         },
     )
 }
@@ -583,31 +597,6 @@ async fn locate_security_md(client: &Client, org: &str, repo: &str) -> Result<Fi
         }
     }
     Ok(FilePresence::Absent)
-}
-
-#[derive(Deserialize)]
-struct CollaboratorEntry {
-    login: String,
-    #[serde(default)]
-    permissions: CollaboratorPerms,
-}
-
-#[derive(Deserialize, Default)]
-struct CollaboratorPerms {
-    #[serde(default)]
-    admin: bool,
-    #[serde(default)]
-    maintain: bool,
-    #[serde(default)]
-    push: bool,
-    #[serde(default)]
-    triage: bool,
-}
-
-impl CollaboratorPerms {
-    fn is_more_than_read(&self) -> bool {
-        self.admin || self.maintain || self.push || self.triage
-    }
 }
 
 async fn fetch_direct_collaborators(

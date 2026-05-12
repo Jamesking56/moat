@@ -1,9 +1,9 @@
-use moat::checks::repos::context::{
+use moat::checks::repo_context::{
     BranchProtectionState, BranchProtections, DependabotConfigState, DirectCollaboratorsState,
     FeatureState, FeatureStatus, FilePresence, RepoContext, RepoListing, SecurityAndAnalysis,
     WebhooksState, WorkflowTokenState,
 };
-use moat::checks::repos::{
+use moat::checks::{
     dependabot_alerts, direct_collaborators, pr_reviews, protected_release_branches,
     push_protection, secret_scanning, signed_commits, workflow_token,
 };
@@ -47,12 +47,15 @@ fn ctx(branch: BranchProtectionState, token: WorkflowTokenState) -> RepoContext 
 #[test]
 fn branch_protection_states() {
     assert_eq!(
-        protected_release_branches::check(&ctx(protected(false, false), WorkflowTokenState::Read))
-            .status,
+        protected_release_branches::repo_check(&ctx(
+            protected(false, false),
+            WorkflowTokenState::Read
+        ))
+        .status,
         Status::Pass
     );
     assert_eq!(
-        protected_release_branches::check(&ctx(
+        protected_release_branches::repo_check(&ctx(
             BranchProtectionState::Unprotected,
             WorkflowTokenState::Read
         ))
@@ -62,12 +65,12 @@ fn branch_protection_states() {
     let mut no_default = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     no_default.branch_protections = BranchProtections::none();
     assert_eq!(
-        protected_release_branches::check(&no_default).status,
+        protected_release_branches::repo_check(&no_default).status,
         Status::Skipped
     );
 
     assert_eq!(
-        protected_release_branches::check(&ctx(
+        protected_release_branches::repo_check(&ctx(
             BranchProtectionState::NoPermission,
             WorkflowTokenState::Read
         ))
@@ -78,18 +81,20 @@ fn branch_protection_states() {
 
 #[test]
 fn signed_commits_flag_routing() {
-    let pass = ctx(protected(true, false), WorkflowTokenState::Read);
-    let fail = ctx(protected(false, true), WorkflowTokenState::Read);
-    assert_eq!(signed_commits::check(&pass).status, Status::Pass);
-    assert_eq!(signed_commits::check(&fail).status, Status::Fail);
+    let mut pass = ctx(protected(true, false), WorkflowTokenState::Read);
+    pass.private = true;
+    let mut fail = ctx(protected(false, true), WorkflowTokenState::Read);
+    fail.private = true;
+    assert_eq!(signed_commits::repo_check(&pass).status, Status::Pass);
+    assert_eq!(signed_commits::repo_check(&fail).status, Status::Fail);
 }
 
 #[test]
 fn pr_reviews_flag_routing() {
     let pass = ctx(protected(false, true), WorkflowTokenState::Read);
     let fail = ctx(protected(true, false), WorkflowTokenState::Read);
-    assert_eq!(pr_reviews::check(&pass).status, Status::Pass);
-    assert_eq!(pr_reviews::check(&fail).status, Status::Fail);
+    assert_eq!(pr_reviews::repo_check(&pass).status, Status::Pass);
+    assert_eq!(pr_reviews::repo_check(&fail).status, Status::Fail);
 }
 
 #[test]
@@ -101,11 +106,11 @@ fn workflow_token_states() {
     );
     let n = ctx(
         BranchProtectionState::Unprotected,
-        WorkflowTokenState::NoPermission,
+        WorkflowTokenState::Unavailable,
     );
-    assert_eq!(workflow_token::check(&r).status, Status::Pass);
-    assert_eq!(workflow_token::check(&w).status, Status::Fail);
-    assert_eq!(workflow_token::check(&n).status, Status::Skipped);
+    assert_eq!(workflow_token::repo_check(&r).status, Status::Pass);
+    assert_eq!(workflow_token::repo_check(&w).status, Status::Fail);
+    assert_eq!(workflow_token::repo_check(&n).status, Status::Skipped);
 }
 
 #[test]
@@ -116,9 +121,9 @@ fn feature_state_outcomes_cover_all_variants() {
     c.push_protection = FeatureState::Disabled;
     c.dependabot_alerts = FeatureState::Unknown;
 
-    assert_eq!(secret_scanning::check(&c).status, Status::Pass);
-    assert_eq!(push_protection::check(&c).status, Status::Fail);
-    assert_eq!(dependabot_alerts::check(&c).status, Status::Skipped);
+    assert_eq!(secret_scanning::repo_check(&c).status, Status::Pass);
+    assert_eq!(push_protection::repo_check(&c).status, Status::Fail);
+    assert_eq!(dependabot_alerts::repo_check(&c).status, Status::Skipped);
 }
 
 fn listing(default_branch: Option<&str>, sa: Option<SecurityAndAnalysis>) -> RepoListing {
@@ -277,7 +282,7 @@ async fn repo_context_fetch_forks_short_circuit() {
     l.fork = true;
     let r = RepoContext::fetch(&client, "acme", l).await.unwrap();
     assert!(r.branch_protections.is_empty());
-    assert!(matches!(r.workflow_token, WorkflowTokenState::NoPermission));
+    assert!(matches!(r.workflow_token, WorkflowTokenState::Unavailable));
 }
 
 #[test]
@@ -285,15 +290,15 @@ fn direct_collaborators_states() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
 
     c.direct_collaborators = DirectCollaboratorsState::Ok(Vec::new());
-    assert_eq!(direct_collaborators::check(&c).status, Status::Pass);
+    assert_eq!(direct_collaborators::repo_check(&c).status, Status::Pass);
 
     c.direct_collaborators = DirectCollaboratorsState::Ok(vec!["alice".into(), "bob".into()]);
-    let outcome = direct_collaborators::check(&c);
+    let outcome = direct_collaborators::repo_check(&c);
     assert_eq!(outcome.status, Status::Fail);
     assert_eq!(outcome.summary, "2");
 
     c.direct_collaborators = DirectCollaboratorsState::NoPermission;
-    assert_eq!(direct_collaborators::check(&c).status, Status::Skipped);
+    assert_eq!(direct_collaborators::repo_check(&c).status, Status::Skipped);
 }
 
 #[tokio::test]
@@ -379,6 +384,6 @@ async fn repo_context_fetch_no_default_branch() {
         .await
         .unwrap();
     assert!(r.branch_protections.is_empty());
-    assert!(matches!(r.workflow_token, WorkflowTokenState::NoPermission));
+    assert!(matches!(r.workflow_token, WorkflowTokenState::Unavailable));
     assert!(matches!(r.dependabot_alerts, FeatureState::Unknown));
 }

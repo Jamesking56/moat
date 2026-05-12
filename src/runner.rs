@@ -1,18 +1,9 @@
-use crate::checks::orgs::{
-    OrgContext, context::MemberList, default_repo_permission,
-    dependabot_alerts as org_dependabot_alerts, fork_pr_contributor_approval, members_without_2fa,
-    push_protection as org_push_protection, release_immutability,
-    secret_scanning as org_secret_scanning, two_factor_required,
-    workflow_token as org_workflow_token,
-};
-use crate::checks::repos::{
-    RepoContext, admin_enforcement, context::RepoListing, dependabot_alerts, dependabot_config,
-    direct_collaborators, immutable_branch, linear_history, pinned_actions, pr_reviews,
-    protected_release_branches, pull_request_target, push_protection, secret_scanning, security_md,
-    signed_commits, webhooks, workflow_permissions, workflow_token,
-};
+use crate::checks::org_context::{MemberList, OrgContext};
+use crate::checks::repo_context::{RepoContext, RepoListing};
+use crate::checks::{CHECKS, Check, Scope};
+use crate::cli::Only;
 use crate::support::github::{Client, Fetch};
-use crate::support::outcome::{CheckOutcome, Status};
+use crate::support::outcome::Status;
 use crate::support::panel;
 use anyhow::{Result, anyhow, bail};
 use futures::stream::{self, StreamExt};
@@ -20,22 +11,6 @@ use owo_colors::OwoColorize;
 use serde::Deserialize;
 
 const CONCURRENCY: usize = 12;
-
-type RepoCheck = (
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    &'static str,
-    fn(&RepoContext) -> CheckOutcome,
-);
-
-type OrgCheck = (
-    &'static str,
-    &'static str,
-    &'static str,
-    CheckOutcome,
-);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AccountKind {
@@ -82,507 +57,17 @@ pub async fn fetch_org_context(client: &Client, org: &str) -> Result<OrgContext>
     OrgContext::fetch(client, org).await
 }
 
-pub type Suppressions = std::collections::HashMap<&'static str, std::collections::HashSet<String>>;
+/// How many progress ticks an org-context fetch will emit.
+pub const ORG_TICKS: usize = 9;
 
-pub fn render_org_checks(
-    ctx: &OrgContext,
-    repo_contexts: Option<&[RepoContext]>,
-    _verbose: bool,
-) -> (Suppressions, Vec<Finding>) {
-    panel::finish_progress("organization");
-    let mut results: [OrgCheck; 9] = [
-        (
-            two_factor_required::NAME,
-            two_factor_required::HOW_TO_FIX,
-            two_factor_required::WHY_ENABLE,
-            two_factor_required::check(ctx),
-        ),
-        (
-            members_without_2fa::NAME,
-            members_without_2fa::HOW_TO_FIX,
-            members_without_2fa::WHY_ENABLE,
-            members_without_2fa::check(ctx),
-        ),
-        (
-            default_repo_permission::NAME,
-            default_repo_permission::HOW_TO_FIX,
-            default_repo_permission::WHY_ENABLE,
-            default_repo_permission::check(ctx),
-        ),
-        (
-            release_immutability::NAME,
-            release_immutability::HOW_TO_FIX,
-            release_immutability::WHY_ENABLE,
-            release_immutability::check(ctx),
-        ),
-        (
-            fork_pr_contributor_approval::NAME,
-            fork_pr_contributor_approval::HOW_TO_FIX,
-            fork_pr_contributor_approval::WHY_ENABLE,
-            fork_pr_contributor_approval::check(ctx),
-        ),
-        (
-            org_workflow_token::NAME,
-            org_workflow_token::HOW_TO_FIX,
-            org_workflow_token::WHY_ENABLE,
-            org_workflow_token::check(ctx),
-        ),
-        (
-            org_secret_scanning::NAME,
-            org_secret_scanning::HOW_TO_FIX,
-            org_secret_scanning::WHY_ENABLE,
-            org_secret_scanning::check(ctx),
-        ),
-        (
-            org_push_protection::NAME,
-            org_push_protection::HOW_TO_FIX,
-            org_push_protection::WHY_ENABLE,
-            org_push_protection::check(ctx),
-        ),
-        (
-            org_dependabot_alerts::NAME,
-            org_dependabot_alerts::HOW_TO_FIX,
-            org_dependabot_alerts::WHY_ENABLE,
-            org_dependabot_alerts::check(ctx),
-        ),
-    ];
+/// How many progress ticks a per-repo scan emits (excluding the initial "scanning N" tick).
+pub const REPO_TICKS: usize = 10;
 
-    let (affected_by_check, suppressions): (
-        std::collections::HashMap<&'static str, Vec<String>>,
-        Suppressions,
-    ) = repo_contexts
-        .map(|repos| decorate_cascades(&mut results, repos))
-        .unwrap_or_default();
-
-    render_posture_panel(&results);
-
-    let active_total = repo_contexts
-        .map(|c| c.iter().filter(|r| !r.archived).count())
-        .unwrap_or(0);
-    let org_findings = build_org_findings(&results, &affected_by_check, active_total);
-
-    (suppressions, org_findings)
-}
-
-fn build_org_findings(
-    results: &[OrgCheck],
-    affected_by_check: &std::collections::HashMap<&'static str, Vec<String>>,
-    active_total: usize,
-) -> Vec<Finding> {
-    let mut out: Vec<Finding> = Vec::new();
-    for (name, how_to_fix, why_enable, outcome) in results {
-        let severity = match outcome.status {
-            Status::Fail => Status::Fail,
-            Status::Warn => Status::Warn,
-            _ => continue,
-        };
-        let base = name.to_uppercase_first();
-        let title = if outcome.summary.is_empty() {
-            base
-        } else {
-            format!("{base} {}", outcome.summary)
-        };
-        let affected_count = affected_by_check
-            .get(name)
-            .map(|v| v.len())
-            .unwrap_or(active_total);
-        out.push(Finding {
-            title,
-            how_to_fix,
-            why_enable,
-            severity,
-            affected_count,
-            affected_list: None,
-        });
-    }
-    out
-}
-
-pub fn render_org_inventory(
-    ctx: &OrgContext,
-    repo_contexts: Option<&[RepoContext]>,
-    verbose: bool,
-) {
-    render_inventory_panel(ctx, repo_contexts, verbose);
-}
-
-fn render_posture_panel(results: &[OrgCheck]) {
-    let total = results.len();
-    let passed = results.iter().filter(|(_, _, _, o)| o.status == Status::Pass).count();
-    let failed = results.iter().filter(|(_, _, _, o)| o.status == Status::Fail).count();
-    let warned = results.iter().filter(|(_, _, _, o)| o.status == Status::Warn).count();
-    let skipped = results.iter().filter(|(_, _, _, o)| o.status == Status::Skipped).count();
-    let applicable = total.saturating_sub(skipped);
-    let pct = if applicable == 0 { 100 } else { (passed * 100) / applicable };
-
-    panel::top_section("ORGANIZATION · Security posture");
-    panel::blank();
-
-    let label = format!("{pct}% hardened");
-    let line = panel::Line::new().space(3).styled(&label, panel::text_bold);
-    panel::row(line);
-
-    const BAR: usize = 60;
-    let filled = (pct * BAR) / 100;
-    let empty = BAR - filled;
-    let bar_color: fn(&str) -> String = if failed > 0 {
-        panel::danger
-    } else if warned > 0 {
-        panel::warning
-    } else {
-        panel::success
-    };
-    let fill_str = "█".repeat(filled);
-    let empty_str = "░".repeat(empty);
-    let bar_line = panel::Line::new()
-        .space(3)
-        .styled(&fill_str, bar_color)
-        .styled(&empty_str, panel::border);
-    panel::row(bar_line);
-
-    panel::blank();
-
-    let counts = panel::Line::new()
-        .space(3)
-        .styled("✓", panel::success_bold)
-        .space(2)
-        .styled(&format!("{passed} passed"), panel::text)
-        .space(4)
-        .styled("✕", panel::danger_bold)
-        .space(2)
-        .styled(&format!("{failed} critical"), panel::text)
-        .space(4)
-        .styled("!", panel::warning_bold)
-        .space(2)
-        .styled(&format!("{warned} warning"), panel::text)
-        .space(4)
-        .styled("·", panel::muted)
-        .space(2)
-        .styled(&format!("{total} checked"), panel::muted);
-    panel::row(counts);
-
-    panel::blank();
-    panel::bottom();
-    println!();
-}
-
-
-pub struct Finding {
-    title: String,
-    how_to_fix: &'static str,
-    why_enable: &'static str,
-    severity: Status,
-    affected_count: usize,
-    affected_list: Option<Vec<String>>,
-}
-
-pub fn render_findings_panel(findings: &[Finding], total_active: usize, verbose: bool) {
-    if findings.is_empty() {
-        return;
-    }
-
-    panel::top_section("Findings");
-
-    let inner = panel::width() - 2;
-    let text_width = inner.saturating_sub(6);
-
-    for (i, finding) in findings.iter().enumerate() {
-        panel::blank();
-
-        let (severity, sev_render): (&str, fn(&str) -> String) = match finding.severity {
-            Status::Fail => ("CRITICAL", panel::danger_bold),
-            _ => ("WARNING", panel::warning_bold),
-        };
-        let badge: (&str, fn(&str) -> String) = match finding.severity {
-            Status::Fail => ("✕", panel::danger_bold),
-            _ => ("!", panel::warning_bold),
-        };
-
-        let summary = if total_active > 0 {
-            format!("{}/{} repos", finding.affected_count, total_active)
-        } else {
-            String::new()
-        };
-
-        let head_left_visible =
-            2 + 1 + 2 + severity.chars().count() + 3 + finding.title.chars().count();
-        let head_right_visible = if summary.is_empty() {
-            0
-        } else {
-            summary.chars().count() + 2
-        };
-        let fits = head_left_visible + 3 + head_right_visible <= inner;
-
-        if fits && !summary.is_empty() {
-            let avail = inner - head_left_visible - head_right_visible;
-            let head = panel::Line::new()
-                .space(2)
-                .styled(badge.0, badge.1)
-                .space(2)
-                .styled(severity, sev_render)
-                .space(3)
-                .styled(&finding.title, panel::text_bold)
-                .space(avail)
-                .styled(&summary, sev_render)
-                .space(2);
-            panel::row(head);
-        } else if summary.is_empty() {
-            let head = panel::Line::new()
-                .space(2)
-                .styled(badge.0, badge.1)
-                .space(2)
-                .styled(severity, sev_render)
-                .space(3)
-                .styled(&finding.title, panel::text_bold);
-            panel::row(head);
-        } else {
-            let head = panel::Line::new()
-                .space(2)
-                .styled(badge.0, badge.1)
-                .space(2)
-                .styled(severity, sev_render)
-                .space(3)
-                .styled(&finding.title, panel::text_bold);
-            panel::row(head);
-            let summary_line = panel::Line::new().space(5).styled(&summary, sev_render);
-            panel::row(summary_line);
-        }
-
-        panel::blank();
-
-        let why = finding.why_enable.replace("→", "›");
-        for line in panel::wrap(&why, text_width) {
-            let l = panel::Line::new().space(5).styled(&line, panel::muted);
-            panel::row(l);
-        }
-
-        panel::blank();
-
-        let path = finding.how_to_fix.replace("→", "›");
-        for line in panel::wrap(&path, text_width) {
-            let l = panel::Line::new().space(5).styled(&line, panel::info);
-            panel::row(l);
-        }
-
-        if let Some(affected) = &finding.affected_list
-            && !affected.is_empty()
-        {
-            panel::blank();
-            let lbl = format!("Affected repositories ({})", affected.len());
-            let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
-            panel::row(l);
-
-            let preview: Vec<&str> = affected.iter().map(String::as_str).collect();
-            let rendered = if verbose || preview.len() <= 6 {
-                preview.join("  ")
-            } else {
-                format!("{}  +{} more", preview[..5].join("  "), preview.len() - 5)
-            };
-            for line in panel::wrap(&rendered, text_width) {
-                let l = panel::Line::new().space(5).styled(&line, panel::text);
-                panel::row(l);
-            }
-        }
-
-        panel::blank();
-        if i + 1 < findings.len() {
-            panel::divider();
-        }
-    }
-
-    panel::bottom();
-    println!();
-}
-
-fn render_inventory_panel(
-    ctx: &OrgContext,
-    repo_contexts: Option<&[RepoContext]>,
-    verbose: bool,
-) {
-    let inventory: &[(&str, &MemberList)] = &[
-        ("outside collaborators", &ctx.outside_collaborators),
-        ("org admins", &ctx.admins),
-    ];
-
-    panel::top_section("Inventory");
-    panel::blank();
-    let mut label_width = inventory.iter().map(|(n, _)| n.chars().count()).max().unwrap_or(0);
-    if repo_contexts.is_some() {
-        label_width = label_width.max("repositories".chars().count());
-    }
-
-    if let Some(repos) = repo_contexts {
-        let total = repos.len();
-        let active = repos.iter().filter(|c| !c.archived).count();
-        let pad = label_width.saturating_sub("repositories".chars().count());
-        let summary = format!("{total} total · {active} active");
-        let l = panel::Line::new()
-            .space(3)
-            .styled("repositories", panel::text_bold)
-            .space(pad + 2)
-            .styled(&summary, panel::accent_bold);
-        panel::row(l);
-    }
-
-    for (name, list) in inventory {
-        let pad = label_width.saturating_sub(name.chars().count());
-        let (summary, summary_color, items): (String, fn(&str) -> String, &[String]) = match list {
-            MemberList::NoPermission => {
-                ("(requires org admin token)".to_string(), panel::muted, &[])
-            }
-            MemberList::Ok(v) if v.is_empty() => ("none".to_string(), panel::muted, &[]),
-            MemberList::Ok(v) => (v.len().to_string(), panel::accent_bold, v.as_slice()),
-        };
-        let l = panel::Line::new()
-            .space(3)
-            .styled(name, panel::text_bold)
-            .space(pad + 2)
-            .styled(&summary, summary_color);
-        panel::row(l);
-        render_inventory_items(items, verbose);
-    }
-
-    panel::blank();
-    panel::bottom();
-    println!();
-}
-
-fn render_inventory_items(items: &[String], verbose: bool) {
-    if items.is_empty() {
-        return;
-    }
-    const PREVIEW: usize = 5;
-    let text_width = panel::width() - 2 - 7;
-    let shown: Vec<&str> = items
-        .iter()
-        .take(if verbose { items.len() } else { PREVIEW })
-        .map(String::as_str)
-        .collect();
-    let rest = items.len().saturating_sub(shown.len());
-    let joined = if rest > 0 {
-        format!("{}  +{} more", shown.join("  "), rest)
-    } else {
-        shown.join("  ")
-    };
-    for line in panel::wrap(&joined, text_width) {
-        let l = panel::Line::new().space(7).styled(&line, panel::muted);
-        panel::row(l);
-    }
-}
-
-trait UpperFirst {
-    fn to_uppercase_first(&self) -> String;
-}
-impl UpperFirst for &str {
-    fn to_uppercase_first(&self) -> String {
-        let mut chars = self.chars();
-        match chars.next() {
-            None => String::new(),
-            Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-        }
-    }
-}
-
-fn decorate_cascades(
-    results: &mut [OrgCheck; 9],
-    repos: &[RepoContext],
-) -> (
-    std::collections::HashMap<&'static str, Vec<String>>,
-    Suppressions,
-) {
-    type AffectedFn = fn(&RepoContext) -> Option<String>;
-    fn fails(run: fn(&RepoContext) -> CheckOutcome, c: &RepoContext) -> Option<String> {
-        (run(c).status == Status::Fail).then(|| c.name.clone())
-    }
-    fn dep(c: &RepoContext) -> Option<String> {
-        fails(dependabot_alerts::check, c)
-    }
-    fn scan(c: &RepoContext) -> Option<String> {
-        fails(secret_scanning::check, c)
-    }
-    fn push(c: &RepoContext) -> Option<String> {
-        fails(push_protection::check, c)
-    }
-    fn token(c: &RepoContext) -> Option<String> {
-        fails(workflow_token::check, c)
-    }
-    fn immutable(c: &RepoContext) -> Option<String> {
-        if immutable_branch::check(c).status != Status::Fail {
-            return None;
-        }
-        let branches: Vec<&str> = c
-            .branch_protections
-            .branches
-            .iter()
-            .filter(|(_, state)| immutable_branch_fails(state))
-            .map(|(name, _)| name.as_str())
-            .collect();
-        Some(if branches.is_empty() {
-            c.name.clone()
-        } else {
-            format!("{} ({})", c.name, branches.join(", "))
-        })
-    }
-
-    let pairs: &[(&'static str, &'static str, AffectedFn)] = &[
-        (org_dependabot_alerts::NAME, "dependabot_alerts", dep),
-        (org_secret_scanning::NAME, "secret_scanning", scan),
-        (org_push_protection::NAME, "push_protection", push),
-        (org_workflow_token::NAME, "workflow_token", token),
-        (release_immutability::NAME, "immutable_branch", immutable),
-    ];
-
-    let mut affected_by_check = std::collections::HashMap::new();
-    let mut suppressions: Suppressions = std::collections::HashMap::new();
-    for (org_name, repo_id, affected_fn) in pairs {
-        let Some((_, _, _, outcome)) = results.iter_mut().find(|(n, _, _, _)| n == org_name) else {
-            continue;
-        };
-        if outcome.status != Status::Fail {
-            continue;
-        }
-        let mut affected: Vec<String> = Vec::new();
-        let mut affected_names: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        for c in repos {
-            if c.archived || c.config.is_off(repo_id) {
-                continue;
-            }
-            if let Some(entry) = affected_fn(c) {
-                affected.push(entry);
-                affected_names.insert(c.name.clone());
-            }
-        }
-        if !affected.is_empty() {
-            outcome.summary = format!("{} ({} affected)", outcome.summary, affected.len());
-            suppressions
-                .entry(*repo_id)
-                .or_default()
-                .extend(affected_names);
-            affected_by_check.insert(*org_name, affected);
-        }
-    }
-    (affected_by_check, suppressions)
-}
-
-fn immutable_branch_fails(state: &crate::checks::repos::context::BranchProtectionState) -> bool {
-    use crate::checks::repos::context::BranchProtectionState;
-    match state {
-        BranchProtectionState::Protected {
-            allow_force_pushes,
-            allow_deletions,
-            ..
-        } => *allow_force_pushes || *allow_deletions,
-        BranchProtectionState::Unprotected => true,
-        _ => false,
-    }
-}
-
-pub async fn fetch_repo_contexts(
+pub async fn list_repos(
     client: &Client,
     account: &str,
     kind: AccountKind,
-) -> Result<Vec<RepoContext>> {
+) -> Result<Vec<RepoListing>> {
     let listing_path = match kind {
         AccountKind::Organization => format!("/orgs/{account}/repos?type=all"),
         AccountKind::User => format!("/users/{account}/repos"),
@@ -595,10 +80,26 @@ pub async fn fetch_repo_contexts(
         }
         Fetch::NotFound => Vec::new(),
     };
-    let listings: Vec<RepoListing> = listings
+    Ok(listings
         .into_iter()
         .filter(|r| !r.fork && !r.archived)
-        .collect();
+        .collect())
+}
+
+pub async fn fetch_repo_contexts_from(
+    client: &Client,
+    account: &str,
+    listings: Vec<RepoListing>,
+) -> Result<Vec<RepoContext>> {
+    fetch_contexts(client, account, listings).await
+}
+
+pub async fn fetch_repo_contexts(
+    client: &Client,
+    account: &str,
+    kind: AccountKind,
+) -> Result<Vec<RepoContext>> {
+    let listings = list_repos(client, account, kind).await?;
     fetch_contexts(client, account, listings).await
 }
 
@@ -647,210 +148,447 @@ async fn fetch_contexts(
     Ok(contexts)
 }
 
-pub fn render_repo_checks(
-    contexts: &[RepoContext],
-    suppressions: Option<&Suppressions>,
-    prepended: Vec<Finding>,
-    verbose: bool,
-) {
-    panel::finish_progress("repositories");
+pub struct CheckContext<'a> {
+    pub org: Option<&'a OrgContext>,
+    pub repos: &'a [RepoContext],
+}
 
-    let columns: &[RepoCheck] = &[
-        (
-            "protected_release_branches",
-            protected_release_branches::COLUMN,
-            protected_release_branches::DESCRIPTION,
-            protected_release_branches::HOW_TO_FIX,
-            protected_release_branches::WHY_ENABLE,
-            protected_release_branches::check,
-        ),
-        (
-            "signed_commits",
-            signed_commits::COLUMN,
-            signed_commits::DESCRIPTION,
-            signed_commits::HOW_TO_FIX,
-            signed_commits::WHY_ENABLE,
-            signed_commits::check,
-        ),
-        (
-            "pr_reviews",
-            pr_reviews::COLUMN,
-            pr_reviews::DESCRIPTION,
-            pr_reviews::HOW_TO_FIX,
-            pr_reviews::WHY_ENABLE,
-            pr_reviews::check,
-        ),
-        (
-            "workflow_token",
-            workflow_token::COLUMN,
-            workflow_token::DESCRIPTION,
-            workflow_token::HOW_TO_FIX,
-            workflow_token::WHY_ENABLE,
-            workflow_token::check,
-        ),
-        (
-            "secret_scanning",
-            secret_scanning::COLUMN,
-            secret_scanning::DESCRIPTION,
-            secret_scanning::HOW_TO_FIX,
-            secret_scanning::WHY_ENABLE,
-            secret_scanning::check,
-        ),
-        (
-            "push_protection",
-            push_protection::COLUMN,
-            push_protection::DESCRIPTION,
-            push_protection::HOW_TO_FIX,
-            push_protection::WHY_ENABLE,
-            push_protection::check,
-        ),
-        (
-            "dependabot_alerts",
-            dependabot_alerts::COLUMN,
-            dependabot_alerts::DESCRIPTION,
-            dependabot_alerts::HOW_TO_FIX,
-            dependabot_alerts::WHY_ENABLE,
-            dependabot_alerts::check,
-        ),
-        (
-            "admin_enforcement",
-            admin_enforcement::COLUMN,
-            admin_enforcement::DESCRIPTION,
-            admin_enforcement::HOW_TO_FIX,
-            admin_enforcement::WHY_ENABLE,
-            admin_enforcement::check,
-        ),
-        (
-            "immutable_branch",
-            immutable_branch::COLUMN,
-            immutable_branch::DESCRIPTION,
-            immutable_branch::HOW_TO_FIX,
-            immutable_branch::WHY_ENABLE,
-            immutable_branch::check,
-        ),
-        (
-            "linear_history",
-            linear_history::COLUMN,
-            linear_history::DESCRIPTION,
-            linear_history::HOW_TO_FIX,
-            linear_history::WHY_ENABLE,
-            linear_history::check,
-        ),
-        (
-            "pinned_actions",
-            pinned_actions::COLUMN,
-            pinned_actions::DESCRIPTION,
-            pinned_actions::HOW_TO_FIX,
-            pinned_actions::WHY_ENABLE,
-            pinned_actions::check,
-        ),
-        (
-            "pull_request_target",
-            pull_request_target::COLUMN,
-            pull_request_target::DESCRIPTION,
-            pull_request_target::HOW_TO_FIX,
-            pull_request_target::WHY_ENABLE,
-            pull_request_target::check,
-        ),
-        (
-            "workflow_permissions",
-            workflow_permissions::COLUMN,
-            workflow_permissions::DESCRIPTION,
-            workflow_permissions::HOW_TO_FIX,
-            workflow_permissions::WHY_ENABLE,
-            workflow_permissions::check,
-        ),
-        (
-            "webhooks",
-            webhooks::COLUMN,
-            webhooks::DESCRIPTION,
-            webhooks::HOW_TO_FIX,
-            webhooks::WHY_ENABLE,
-            webhooks::check,
-        ),
-        (
-            "direct_collaborators",
-            direct_collaborators::COLUMN,
-            direct_collaborators::DESCRIPTION,
-            direct_collaborators::HOW_TO_FIX,
-            direct_collaborators::WHY_ENABLE,
-            direct_collaborators::check,
-        ),
-        (
-            "security_md",
-            security_md::COLUMN,
-            security_md::DESCRIPTION,
-            security_md::HOW_TO_FIX,
-            security_md::WHY_ENABLE,
-            security_md::check,
-        ),
-        (
-            "dependabot_config",
-            dependabot_config::COLUMN,
-            dependabot_config::DESCRIPTION,
-            dependabot_config::HOW_TO_FIX,
-            dependabot_config::WHY_ENABLE,
-            dependabot_config::check,
-        ),
-    ];
+pub struct CheckResult {
+    pub check: &'static Check,
+    pub status: Status,
+    pub summary: String,
+    pub state_note: Option<String>,
+    pub affected_repos: Vec<String>,
+    pub org_default_issue: bool,
+}
 
-    let active_total = contexts.iter().filter(|c| !c.archived).count();
+pub fn run_checks(ctx: &CheckContext<'_>, only: Option<Only>) -> Vec<CheckResult> {
+    let active_total = ctx.repos.iter().filter(|c| !c.archived).count();
 
-    let mut repo_findings: Vec<Finding> = Vec::new();
-    for (id, label, _desc, how_to_fix, why_enable, run) in columns {
-        let mut fail_repos: Vec<String> = Vec::new();
-        let mut unknown_repos: Vec<String> = Vec::new();
-        for ctx in contexts {
-            if ctx.archived || ctx.config.is_off(id) {
+    CHECKS
+        .iter()
+        .filter(|c| scope_matches(c.scope(), ctx, only))
+        .map(|check| evaluate(check, ctx, active_total))
+        .collect()
+}
+
+fn scope_matches(scope: Scope, ctx: &CheckContext<'_>, only: Option<Only>) -> bool {
+    let has_org = ctx.org.is_some();
+    let scope_ok = match scope {
+        Scope::Org => has_org,
+        Scope::Repo => true,
+        Scope::OrgAndRepo => true,
+    };
+    if !scope_ok {
+        return false;
+    }
+    match only {
+        None => true,
+        Some(Only::Org) => matches!(scope, Scope::Org | Scope::OrgAndRepo),
+        Some(Only::Repos) => matches!(scope, Scope::Repo | Scope::OrgAndRepo),
+    }
+}
+
+fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) -> CheckResult {
+    let only_repos_filter = false;
+    let _ = only_repos_filter;
+
+    let org_outcome = match (check.org_eval, ctx.org) {
+        (Some(f), Some(org)) => Some(f(org)),
+        _ => None,
+    };
+
+    let mut affected: Vec<String> = Vec::new();
+    let mut repo_pass = 0usize;
+    let mut repo_skipped = 0usize;
+    let mut repo_warned = 0usize;
+    let mut repo_applicable = 0usize;
+    if let Some(f) = check.repo_eval {
+        for r in ctx.repos {
+            if r.archived || r.config.is_off(check.id) {
                 continue;
             }
-            let suppressed = suppressions
-                .map(|s| s.get(id).is_some_and(|set| set.contains(&ctx.name)))
-                .unwrap_or(false);
-            let outcome = run(ctx);
+            repo_applicable += 1;
+            let outcome = f(r);
             match outcome.status {
-                Status::Fail if !suppressed => fail_repos.push(ctx.name.clone()),
-                Status::Skipped if outcome.summary == "?" => unknown_repos.push(ctx.name.clone()),
-                _ => {}
+                Status::Fail => affected.push(r.name.clone()),
+                Status::Pass => repo_pass += 1,
+                Status::Warn => repo_warned += 1,
+                Status::Skipped => repo_skipped += 1,
             }
-        }
-        let label_owned = label.replace('_', " ");
-        let title = label_owned.as_str().to_uppercase_first();
-        if !fail_repos.is_empty() {
-            repo_findings.push(Finding {
-                title: title.clone(),
-                how_to_fix,
-                why_enable,
-                severity: Status::Fail,
-                affected_count: fail_repos.len(),
-                affected_list: Some(fail_repos),
-            });
-        }
-        if !unknown_repos.is_empty() {
-            repo_findings.push(Finding {
-                title,
-                how_to_fix,
-                why_enable,
-                severity: Status::Skipped,
-                affected_count: unknown_repos.len(),
-                affected_list: Some(unknown_repos),
-            });
         }
     }
 
-    let mut combined: Vec<Finding> = prepended;
-    combined.append(&mut repo_findings);
+    let org_failed = matches!(org_outcome.as_ref().map(|o| o.status), Some(Status::Fail));
+    let org_warned = matches!(org_outcome.as_ref().map(|o| o.status), Some(Status::Warn));
+    let org_passed = matches!(org_outcome.as_ref().map(|o| o.status), Some(Status::Pass));
+    let org_skipped = matches!(
+        org_outcome.as_ref().map(|o| o.status),
+        Some(Status::Skipped)
+    );
 
-    combined.sort_by(|a, b| match (a.severity, b.severity) {
-        (Status::Fail, Status::Fail)
-        | (Status::Warn, Status::Warn)
-        | (Status::Skipped, Status::Skipped) => b.affected_count.cmp(&a.affected_count),
-        (Status::Fail, _) => std::cmp::Ordering::Less,
-        (_, Status::Fail) => std::cmp::Ordering::Greater,
-        (Status::Warn, _) => std::cmp::Ordering::Less,
-        (_, Status::Warn) => std::cmp::Ordering::Greater,
-        _ => std::cmp::Ordering::Equal,
+    let any_repo_fail = !affected.is_empty();
+    let any_repo_warn = repo_warned > 0;
+    let any_repo_pass = repo_pass > 0;
+
+    let status = if org_failed || any_repo_fail {
+        Status::Fail
+    } else if org_warned || any_repo_warn {
+        Status::Warn
+    } else if org_passed || any_repo_pass {
+        Status::Pass
+    } else if org_skipped || repo_skipped > 0 || repo_applicable == 0 {
+        // Org-only check on a user account, or no applicable repos
+        Status::Skipped
+    } else {
+        Status::Pass
+    };
+
+    let summary = build_summary(
+        check,
+        &org_outcome,
+        affected.len(),
+        repo_applicable,
+        status,
+        active_total,
+    );
+
+    let org_note = org_outcome.as_ref().and_then(|o| {
+        let s = o.summary.trim();
+        if s.is_empty() {
+            None
+        } else {
+            Some(s.to_string())
+        }
     });
+    let state_note = org_note;
 
-    render_findings_panel(&combined, active_total, verbose);
+    CheckResult {
+        check,
+        status,
+        summary,
+        state_note,
+        affected_repos: affected,
+        org_default_issue: org_failed || org_warned,
+    }
+}
+
+fn build_summary(
+    check: &Check,
+    _org_outcome: &Option<crate::support::outcome::CheckOutcome>,
+    failing_repos: usize,
+    _repo_applicable: usize,
+    status: Status,
+    active_total: usize,
+) -> String {
+    if matches!(check.scope(), Scope::Org) {
+        return "org-wide".to_string();
+    }
+    if active_total == 0 {
+        return String::new();
+    }
+    match status {
+        Status::Fail => format!("{failing_repos}/{active_total} repos failing"),
+        Status::Pass => format!("{active_total}/{active_total} repos passing"),
+        Status::Warn => format!("{active_total} repos with warnings"),
+        Status::Skipped => String::new(),
+    }
+}
+
+pub fn render_posture_panel(results: &[CheckResult]) {
+    let total = results.len();
+    let passed = results.iter().filter(|r| r.status == Status::Pass).count();
+    let failed = results.iter().filter(|r| r.status == Status::Fail).count();
+    let warned = results.iter().filter(|r| r.status == Status::Warn).count();
+    let skipped = results
+        .iter()
+        .filter(|r| r.status == Status::Skipped)
+        .count();
+    let applicable = total.saturating_sub(skipped);
+    let pct = if applicable == 0 {
+        100
+    } else {
+        (passed * 100) / applicable
+    };
+
+    panel::top_section("Security posture");
+    panel::blank();
+
+    let label = format!("{pct}% hardened");
+    let line = panel::Line::new().space(3).styled(&label, panel::text_bold);
+    panel::row(line);
+
+    const BAR: usize = 60;
+    let filled = (pct * BAR) / 100;
+    let empty = BAR - filled;
+    let bar_color: fn(&str) -> String = match pct {
+        0..=33 => panel::danger,
+        34..=66 => panel::warning,
+        _ => panel::success,
+    };
+    let mut bar_line = panel::Line::new().space(3);
+    let filled_str = "█".repeat(filled);
+    bar_line = bar_line.styled(&filled_str, bar_color);
+    let empty_str = "░".repeat(empty);
+    bar_line = bar_line.styled(&empty_str, panel::border);
+    panel::row(bar_line);
+
+    panel::blank();
+
+    let counts = panel::Line::new()
+        .space(3)
+        .styled("✓", panel::success_bold)
+        .space(2)
+        .styled(&format!("{passed} passed"), panel::text)
+        .space(4)
+        .styled("✕", panel::danger_bold)
+        .space(2)
+        .styled(&format!("{failed} critical"), panel::text)
+        .space(4)
+        .styled("!", panel::warning_bold)
+        .space(2)
+        .styled(&format!("{warned} warnings"), panel::text)
+        .space(4)
+        .styled("·", panel::muted)
+        .space(2)
+        .styled(&format!("{total} total"), panel::muted);
+    panel::row(counts);
+
+    panel::blank();
+    panel::bottom();
+    println!();
+}
+
+pub fn render_checks_panel(
+    results: &[CheckResult],
+    org: Option<&OrgContext>,
+    active_total: usize,
+    verbose: bool,
+) {
+    if results.is_empty() {
+        return;
+    }
+
+    let order = |s: Status| match s {
+        Status::Pass => 0,
+        Status::Skipped => 1,
+        Status::Warn => 2,
+        Status::Fail => 3,
+    };
+    let breadth = |r: &CheckResult| {
+        if matches!(r.status, Status::Fail | Status::Warn) && r.summary == "org-wide" {
+            usize::MAX
+        } else {
+            r.affected_repos.len()
+        }
+    };
+    let mut sorted: Vec<&CheckResult> = results.iter().collect();
+    sorted.sort_by_key(|r| (order(r.status), breadth(r)));
+
+    panel::top_section("Checks");
+
+    let inner = panel::width() - 2;
+    let text_width = inner.saturating_sub(6);
+
+    let count = sorted.len();
+    for (i, r) in sorted.iter().enumerate() {
+        panel::blank();
+
+        type Renderer = fn(&str) -> String;
+        let (severity, sev_render, badge_glyph, badge_render): (&str, Renderer, &str, Renderer) =
+            match r.status {
+                Status::Fail => ("CRITICAL", panel::danger_bold, "✕", panel::danger_bold),
+                Status::Warn => ("WARNING", panel::warning_bold, "!", panel::warning_bold),
+                Status::Pass => ("PASS", panel::success_bold, "✓", panel::success_bold),
+                Status::Skipped => ("SKIPPED", panel::muted, "—", panel::muted),
+            };
+        let badge: (&str, fn(&str) -> String) = (badge_glyph, badge_render);
+
+        let title = uppercase_first(r.check.label);
+
+        let head_left_visible = 2 + 1 + 2 + severity.chars().count() + 3 + title.chars().count();
+        let head_right_visible = if r.summary.is_empty() {
+            0
+        } else {
+            r.summary.chars().count() + 2
+        };
+        let fits = head_left_visible + 3 + head_right_visible <= inner;
+
+        if fits && !r.summary.is_empty() {
+            let avail = inner - head_left_visible - head_right_visible;
+            let summary_render: fn(&str) -> String = if r.summary == "org-wide" {
+                panel::muted
+            } else {
+                sev_render
+            };
+            let head = panel::Line::new()
+                .space(2)
+                .styled(badge.0, badge.1)
+                .space(2)
+                .styled(severity, sev_render)
+                .space(3)
+                .styled(&title, panel::text_bold)
+                .space(avail)
+                .styled(&r.summary, summary_render)
+                .space(2);
+            panel::row(head);
+        } else if r.summary.is_empty() {
+            let head = panel::Line::new()
+                .space(2)
+                .styled(badge.0, badge.1)
+                .space(2)
+                .styled(severity, sev_render)
+                .space(3)
+                .styled(&title, panel::text_bold);
+            panel::row(head);
+        } else {
+            let head = panel::Line::new()
+                .space(2)
+                .styled(badge.0, badge.1)
+                .space(2)
+                .styled(severity, sev_render)
+                .space(3)
+                .styled(&title, panel::text_bold);
+            panel::row(head);
+            let summary_render: fn(&str) -> String = if r.summary == "org-wide" {
+                panel::muted
+            } else {
+                sev_render
+            };
+            let summary_line = panel::Line::new()
+                .space(5)
+                .styled(&r.summary, summary_render);
+            panel::row(summary_line);
+        }
+
+        panel::blank();
+
+        if let Some(note) = &r.state_note {
+            let line_text = format!("Currently: {note}.");
+            for line in panel::wrap(&line_text, text_width) {
+                let l = panel::Line::new().space(5).styled(&line, panel::text);
+                panel::row(l);
+            }
+            panel::blank();
+        }
+
+        let why = r.check.why_enable.replace("→", "›");
+        for line in panel::wrap(&why, text_width) {
+            let l = panel::Line::new().space(5).styled(&line, panel::muted);
+            panel::row(l);
+        }
+
+        panel::blank();
+
+        let path = r.check.how_to_fix.replace("→", "›");
+        for line in panel::wrap(&path, text_width) {
+            let l = panel::Line::new().space(5).styled(&line, panel::info);
+            panel::row(l);
+        }
+
+        let is_finding = matches!(r.status, Status::Fail | Status::Warn);
+
+        if is_finding && r.org_default_issue {
+            panel::blank();
+            let note = "org-wide default also flagged — fixing org default propagates to new repos";
+            for line in panel::wrap(note, text_width) {
+                let l = panel::Line::new().space(5).styled(&line, panel::accent);
+                panel::row(l);
+            }
+        }
+
+        if let Some(o) = org {
+            match r.check.id {
+                "direct_collaborators" => {
+                    render_member_block(
+                        "Outside collaborators",
+                        &o.outside_collaborators,
+                        text_width,
+                        verbose,
+                    );
+                }
+                "admin_enforcement" => {
+                    render_member_block("Bypass list", &o.admins, text_width, verbose);
+                }
+                _ => {}
+            }
+        }
+
+        if is_finding && !r.affected_repos.is_empty() {
+            panel::blank();
+            let lbl = format!("Affected repositories ({})", r.affected_repos.len());
+            let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
+            panel::row(l);
+
+            let preview: Vec<&str> = r.affected_repos.iter().map(String::as_str).collect();
+            let rendered = if verbose || preview.len() <= 6 {
+                preview.join("  ")
+            } else {
+                format!(
+                    "{}  +{} more · --verbose to list",
+                    preview[..5].join("  "),
+                    preview.len() - 5
+                )
+            };
+            for line in panel::wrap(&rendered, text_width) {
+                let l = panel::Line::new().space(5).styled(&line, panel::text);
+                panel::row(l);
+            }
+        }
+
+        panel::blank();
+        if i + 1 < count {
+            panel::divider();
+        }
+    }
+
+    panel::bottom();
+    println!();
+
+    let _ = active_total;
+}
+
+fn render_member_block(title: &str, list: &MemberList, text_width: usize, verbose: bool) {
+    panel::blank();
+    match list {
+        MemberList::NoPermission => {
+            let lbl = format!("{title} (requires org admin token)");
+            let l = panel::Line::new().space(5).styled(&lbl, panel::muted);
+            panel::row(l);
+        }
+        MemberList::Ok(v) if v.is_empty() => {
+            let lbl = format!("{title} (0)");
+            let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
+            panel::row(l);
+            let none = panel::Line::new().space(5).styled("none", panel::muted);
+            panel::row(none);
+        }
+        MemberList::Ok(v) => {
+            let lbl = format!("{title} ({})", v.len());
+            let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
+            panel::row(l);
+            let preview: Vec<&str> = v.iter().map(String::as_str).collect();
+            let rendered = if verbose || preview.len() <= 6 {
+                preview.join("  ")
+            } else {
+                format!(
+                    "{}  +{} more · --verbose to list",
+                    preview[..5].join("  "),
+                    preview.len() - 5
+                )
+            };
+            for line in panel::wrap(&rendered, text_width) {
+                let l = panel::Line::new().space(5).styled(&line, panel::text);
+                panel::row(l);
+            }
+        }
+    }
+}
+
+fn uppercase_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+    }
 }

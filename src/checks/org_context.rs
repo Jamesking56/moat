@@ -1,10 +1,12 @@
+use crate::checks::common::{self, CollaboratorEntry};
 use crate::support::github::{Client, Fetch};
 use crate::support::outcome::CheckOutcome;
-use crate::support::panel;
 use anyhow::Result;
 use futures::stream::{self, StreamExt};
 use serde::Deserialize;
 use std::collections::BTreeMap;
+
+pub use crate::checks::common::WorkflowTokenState;
 
 const COLLABORATOR_CONCURRENCY: usize = 12;
 
@@ -12,9 +14,7 @@ async fn traced<F, T>(label: &str, fut: F) -> T
 where
     F: std::future::Future<Output = T>,
 {
-    let out = fut.await;
-    panel::progress(label);
-    out
+    common::traced(None, label, fut).await
 }
 
 pub struct OrgContext {
@@ -32,18 +32,22 @@ pub struct OrgContext {
 }
 
 #[derive(Clone, Copy)]
-pub enum WorkflowTokenState {
-    Read,
-    Write,
-    Unknown,
-}
-
-#[derive(Clone, Copy)]
 pub enum FeatureDefaultState {
     Enabled,
     Disabled,
     NotSet,
     Unknown,
+}
+
+impl FeatureDefaultState {
+    pub fn to_outcome(&self, unknown_label: &str) -> CheckOutcome {
+        match self {
+            Self::Enabled => CheckOutcome::pass("enabled by default"),
+            Self::Disabled => CheckOutcome::fail("disabled"),
+            Self::NotSet => CheckOutcome::warn("not set as default"),
+            Self::Unknown => CheckOutcome::skipped(unknown_label),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -239,9 +243,9 @@ impl OrgContext {
             Fetch::Ok(w) => match w.default_workflow_permissions.as_deref() {
                 Some("read") => WorkflowTokenState::Read,
                 Some(_) => WorkflowTokenState::Write,
-                None => WorkflowTokenState::Unknown,
+                None => WorkflowTokenState::Unavailable,
             },
-            _ => WorkflowTokenState::Unknown,
+            _ => WorkflowTokenState::Unavailable,
         };
 
         let (secret_scanning_default, push_protection_default, dependabot_alerts_default) =
@@ -317,31 +321,6 @@ struct RepoBrief {
     fork: bool,
     #[serde(default)]
     archived: bool,
-}
-
-#[derive(Deserialize)]
-struct CollaboratorEntry {
-    login: String,
-    #[serde(default)]
-    permissions: CollaboratorPerms,
-}
-
-#[derive(Deserialize, Default)]
-struct CollaboratorPerms {
-    #[serde(default)]
-    admin: bool,
-    #[serde(default)]
-    maintain: bool,
-    #[serde(default)]
-    push: bool,
-    #[serde(default)]
-    triage: bool,
-}
-
-impl CollaboratorPerms {
-    fn is_more_than_read(&self) -> bool {
-        self.admin || self.maintain || self.push || self.triage
-    }
 }
 
 async fn fetch_outside_collaborators(client: &Client, org: &str) -> Result<MemberList> {

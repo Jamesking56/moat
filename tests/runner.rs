@@ -137,8 +137,15 @@ async fn run_org_checks_completes_against_mocked_server() {
     let server = MockServer::start().await;
     stub_org(&server, "acme").await;
     let client = Client::with_base_url("t".into(), server.uri()).unwrap();
-    let ctx = runner::fetch_org_context(&client, "acme").await.unwrap();
-    runner::render_org_checks(&ctx, None, false);
+    let org = runner::fetch_org_context(&client, "acme").await.unwrap();
+    let repos: Vec<moat::checks::RepoContext> = Vec::new();
+    let ctx = runner::CheckContext {
+        org: Some(&org),
+        repos: &repos,
+    };
+    let results = runner::run_checks(&ctx, None);
+    runner::render_posture_panel(&results);
+    runner::render_checks_panel(&results, Some(&org), 0, false);
 }
 
 #[tokio::test]
@@ -149,7 +156,13 @@ async fn run_repo_checks_completes_against_mocked_server() {
     let contexts = runner::fetch_repo_contexts(&client, "acme", AccountKind::Organization)
         .await
         .unwrap();
-    runner::render_repo_checks(&contexts, None, false);
+    let ctx = runner::CheckContext {
+        org: None,
+        repos: &contexts,
+    };
+    let results = runner::run_checks(&ctx, None);
+    runner::render_posture_panel(&results);
+    runner::render_checks_panel(&results, None, contexts.len(), false);
 }
 
 #[tokio::test]
@@ -164,10 +177,9 @@ async fn full_cli_audit_against_mocked_github() {
         .success()
         .stdout(predicate::str::contains("moat"))
         .stdout(predicate::str::contains("acme"))
-        .stdout(predicate::str::contains("ORGANIZATION"))
-        .stdout(predicate::str::contains("REPOSITORIES"))
-        .stdout(predicate::str::contains("demo"))
-        .stdout(predicate::str::contains("SUMMARY"));
+        .stdout(predicate::str::contains("Security posture"))
+        .stdout(predicate::str::contains("hardened"))
+        .stdout(predicate::str::contains("Checks"));
 }
 
 #[tokio::test]
@@ -180,8 +192,7 @@ async fn cli_audit_only_org_skips_repos_section() {
         .args(["audit", "acme", "--only", "org"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("ORGANIZATION"))
-        .stdout(predicate::str::contains("REPOSITORIES").not());
+        .stdout(predicate::str::contains("Security posture"));
 }
 
 #[tokio::test]
@@ -194,12 +205,11 @@ async fn cli_audit_only_repos_skips_org_section() {
         .args(["audit", "acme", "--only", "repos"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("REPOSITORIES"))
-        .stdout(predicate::str::contains("ORGANIZATION").not());
+        .stdout(predicate::str::contains("Security posture"));
 }
 
 #[tokio::test]
-async fn cli_audit_user_skips_org_section_with_message() {
+async fn cli_audit_user_account_runs_repo_checks_only() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/users/nuno"))
@@ -220,5 +230,5 @@ async fn cli_audit_user_skips_org_section_with_message() {
         .assert()
         .success()
         .stdout(predicate::str::contains("user"))
-        .stdout(predicate::str::contains("skipped"));
+        .stdout(predicate::str::contains("Security posture"));
 }

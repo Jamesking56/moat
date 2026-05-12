@@ -1,14 +1,11 @@
-use super::context::{BranchEval, BranchProtectionState, RepoContext};
+use crate::checks::repo_context::{BranchEval, BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const COLUMN: &str = "immutable";
-pub const DESCRIPTION: &str = "release branches disallow force pushes and deletions (Settings → Branches → ruleset → Block force pushes, Restrict deletions)";
-pub const HOW_TO_FIX: &str =
-    "github → repository → settings → branches → edit ruleset → block force pushes + restrict deletions";
-pub const WHY_ENABLE: &str =
-    "force pushes and branch deletions rewrite history — an attacker (or a tired maintainer) can erase the audit trail of a malicious commit or quietly replace a tagged release with a different tree.";
+pub const LABEL: &str = "immutable branches";
+pub const HOW_TO_FIX: &str = "github → repository → settings → branches → edit ruleset → block force pushes + restrict deletions.";
+pub const WHY_ENABLE: &str = "force pushes and branch deletions rewrite history — an attacker (or a tired maintainer) can erase the audit trail of a malicious commit or quietly replace a tagged release with a different tree.";
 
-pub fn check(ctx: &RepoContext) -> CheckOutcome {
+pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     ctx.branch_protections.aggregate(|state| match state {
         BranchProtectionState::Protected {
             allow_force_pushes,

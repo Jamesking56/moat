@@ -1,8 +1,8 @@
-use moat::checks::orgs::context::{
+use moat::checks::org_context::{
     DefaultRepoPermissionState, FeatureDefaultState, ForkPrContributorApprovalState, MemberList,
     OrgContext, ReleaseImmutabilityState, TwoFactorState, WorkflowTokenState,
 };
-use moat::checks::orgs::{members_without_2fa, two_factor_required};
+use moat::checks::{members_without_2fa, two_factor_required};
 use moat::support::github::Client;
 use moat::support::outcome::Status;
 use wiremock::matchers::{method, path, query_param};
@@ -37,7 +37,7 @@ fn two_factor_required_passes_when_required() {
         MemberList::Ok(vec![]),
         MemberList::Ok(vec![]),
     );
-    let o = two_factor_required::check(&c);
+    let o = two_factor_required::org_check(&c);
     assert_eq!(o.status, Status::Pass);
     assert_eq!(o.summary, "required for every member");
 }
@@ -50,7 +50,7 @@ fn two_factor_required_fails_when_not_required() {
         MemberList::Ok(vec![]),
         MemberList::Ok(vec![]),
     );
-    assert_eq!(two_factor_required::check(&c).status, Status::Fail);
+    assert_eq!(two_factor_required::org_check(&c).status, Status::Fail);
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn two_factor_required_skipped_when_unknown() {
         MemberList::Ok(vec![]),
         MemberList::Ok(vec![]),
     );
-    assert_eq!(two_factor_required::check(&c).status, Status::Skipped);
+    assert_eq!(two_factor_required::org_check(&c).status, Status::Skipped);
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn members_without_2fa_passes_when_empty() {
         MemberList::Ok(vec![]),
         MemberList::Ok(vec![]),
     );
-    assert_eq!(members_without_2fa::check(&c).status, Status::Pass);
+    assert_eq!(members_without_2fa::org_check(&c).status, Status::Pass);
 }
 
 #[test]
@@ -83,7 +83,7 @@ fn members_without_2fa_fails_with_items_when_present() {
         MemberList::Ok(vec![]),
         MemberList::Ok(vec![]),
     );
-    let o = members_without_2fa::check(&c);
+    let o = members_without_2fa::org_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(o.summary.contains('2'));
     assert_eq!(o.items, vec!["alice", "bob"]);
@@ -97,7 +97,7 @@ fn members_without_2fa_skipped_when_no_permission() {
         MemberList::Ok(vec![]),
         MemberList::Ok(vec![]),
     );
-    assert_eq!(members_without_2fa::check(&c).status, Status::Skipped);
+    assert_eq!(members_without_2fa::org_check(&c).status, Status::Skipped);
 }
 
 #[tokio::test]

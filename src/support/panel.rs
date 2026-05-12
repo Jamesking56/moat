@@ -1,5 +1,6 @@
 use owo_colors::OwoColorize;
 use std::io::{IsTerminal, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 const MIN_WIDTH: usize = 60;
@@ -22,21 +23,40 @@ struct ProgressState {
     brand: String,
     left: String,
     tty: bool,
+    done: AtomicUsize,
+    total: AtomicUsize,
 }
 
 static PROGRESS: Mutex<Option<ProgressState>> = Mutex::new(None);
 
-pub fn progress(msg: &str) {
+pub fn progress(_msg: &str) {
     let state = PROGRESS.lock().unwrap();
     let Some(s) = state.as_ref() else {
-        eprintln!("  {} {}", "→".bright_black(), msg.bright_black());
         return;
     };
+    let done = s.done.fetch_add(1, Ordering::Relaxed) + 1;
     if !s.tty {
-        eprintln!("  {} {}", "→".bright_black(), msg.bright_black());
         return;
     }
-    rewrite_header_right(s, msg);
+    let total = s.total.load(Ordering::Relaxed);
+    let right = if total > 0 {
+        format!("{}/{} checks", done.min(total), total)
+    } else {
+        format!("{done} checks")
+    };
+    rewrite_header_right(s, &right);
+}
+
+pub fn bump_progress_total(extra: usize) {
+    let state = PROGRESS.lock().unwrap();
+    if let Some(s) = state.as_ref() {
+        let total = s.total.fetch_add(extra, Ordering::Relaxed) + extra;
+        if s.tty {
+            let done = s.done.load(Ordering::Relaxed);
+            let right = format!("{}/{} checks", done.min(total), total);
+            rewrite_header_right(s, &right);
+        }
+    }
 }
 
 pub fn finish_progress(final_right: &str) {
@@ -83,48 +103,99 @@ const TEXT_RGB: (u8, u8, u8) = (229, 231, 235);
 const MUTED_RGB: (u8, u8, u8) = (124, 132, 151);
 const SUCCESS_RGB: (u8, u8, u8) = (126, 231, 135);
 const WARNING_RGB: (u8, u8, u8) = (242, 204, 96);
-const DANGER_RGB: (u8, u8, u8) = (255, 107, 154);
+const DANGER_RGB: (u8, u8, u8) = (239, 83, 80);
 const INFO_RGB: (u8, u8, u8) = (138, 180, 255);
 const ACCENT_RGB: (u8, u8, u8) = (192, 132, 252);
 
 pub fn border(s: &str) -> String {
-    s.truecolor(BORDER_RGB.0, BORDER_RGB.1, BORDER_RGB.2).to_string()
+    s.truecolor(BORDER_RGB.0, BORDER_RGB.1, BORDER_RGB.2)
+        .to_string()
 }
 pub fn text(s: &str) -> String {
     s.truecolor(TEXT_RGB.0, TEXT_RGB.1, TEXT_RGB.2).to_string()
 }
 pub fn text_bold(s: &str) -> String {
-    s.truecolor(TEXT_RGB.0, TEXT_RGB.1, TEXT_RGB.2).bold().to_string()
+    s.truecolor(TEXT_RGB.0, TEXT_RGB.1, TEXT_RGB.2)
+        .bold()
+        .to_string()
 }
 pub fn muted(s: &str) -> String {
-    s.truecolor(MUTED_RGB.0, MUTED_RGB.1, MUTED_RGB.2).to_string()
+    s.truecolor(MUTED_RGB.0, MUTED_RGB.1, MUTED_RGB.2)
+        .to_string()
 }
 pub fn success(s: &str) -> String {
-    s.truecolor(SUCCESS_RGB.0, SUCCESS_RGB.1, SUCCESS_RGB.2).to_string()
+    s.truecolor(SUCCESS_RGB.0, SUCCESS_RGB.1, SUCCESS_RGB.2)
+        .to_string()
 }
 pub fn success_bold(s: &str) -> String {
-    s.truecolor(SUCCESS_RGB.0, SUCCESS_RGB.1, SUCCESS_RGB.2).bold().to_string()
+    s.truecolor(SUCCESS_RGB.0, SUCCESS_RGB.1, SUCCESS_RGB.2)
+        .bold()
+        .to_string()
 }
 pub fn warning(s: &str) -> String {
-    s.truecolor(WARNING_RGB.0, WARNING_RGB.1, WARNING_RGB.2).to_string()
+    s.truecolor(WARNING_RGB.0, WARNING_RGB.1, WARNING_RGB.2)
+        .to_string()
 }
 pub fn warning_bold(s: &str) -> String {
-    s.truecolor(WARNING_RGB.0, WARNING_RGB.1, WARNING_RGB.2).bold().to_string()
+    s.truecolor(WARNING_RGB.0, WARNING_RGB.1, WARNING_RGB.2)
+        .bold()
+        .to_string()
 }
 pub fn danger(s: &str) -> String {
-    s.truecolor(DANGER_RGB.0, DANGER_RGB.1, DANGER_RGB.2).to_string()
+    s.truecolor(DANGER_RGB.0, DANGER_RGB.1, DANGER_RGB.2)
+        .to_string()
 }
 pub fn danger_bold(s: &str) -> String {
-    s.truecolor(DANGER_RGB.0, DANGER_RGB.1, DANGER_RGB.2).bold().to_string()
+    s.truecolor(DANGER_RGB.0, DANGER_RGB.1, DANGER_RGB.2)
+        .bold()
+        .to_string()
 }
 pub fn info(s: &str) -> String {
     s.truecolor(INFO_RGB.0, INFO_RGB.1, INFO_RGB.2).to_string()
 }
 pub fn accent(s: &str) -> String {
-    s.truecolor(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2).to_string()
+    s.truecolor(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2)
+        .to_string()
 }
 pub fn accent_bold(s: &str) -> String {
-    s.truecolor(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2).bold().to_string()
+    s.truecolor(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2)
+        .bold()
+        .to_string()
+}
+
+/// 20-stop red → yellow → green gradient. Returns the RGB for bucket `idx`
+/// out of `total` positions.
+fn gradient_rgb(idx: usize, total: usize) -> (u8, u8, u8) {
+    const STOPS: [(u8, u8, u8); 20] = [
+        (239, 83, 80),
+        (239, 96, 82),
+        (240, 110, 84),
+        (240, 123, 85),
+        (240, 137, 87),
+        (241, 150, 89),
+        (241, 164, 91),
+        (241, 177, 92),
+        (242, 191, 94),
+        (242, 204, 96),
+        (229, 207, 100),
+        (216, 210, 105),
+        (203, 213, 109),
+        (190, 216, 113),
+        (177, 219, 118),
+        (164, 222, 122),
+        (152, 225, 126),
+        (139, 228, 130),
+        (132, 230, 133),
+        (126, 231, 135),
+    ];
+    let n = total.max(1);
+    let bucket = (idx * STOPS.len()) / n;
+    STOPS[bucket.min(STOPS.len() - 1)]
+}
+
+pub fn gradient(s: &str, idx: usize, total: usize) -> String {
+    let (r, g, b) = gradient_rgb(idx, total);
+    s.truecolor(r, g, b).to_string()
 }
 
 #[derive(Default)]
@@ -161,12 +232,14 @@ pub fn top_titled(title: &str, badge: &str) {
     let title_visible = title.to_string();
     let used = prefix_visible.chars().count() + title_visible.chars().count() + 1;
     let dashes = width().saturating_sub(used + 1);
+    let title_part = format!(" {} ", text_bold(title));
+    let right = border(&format!("{}─╮", "─".repeat(dashes)));
     println!(
         "{}{}{}{}",
         border("╭─ "),
         accent_bold(badge),
-        format!(" {} ", text_bold(title)),
-        border(&format!("{}─╮", "─".repeat(dashes))),
+        title_part,
+        right,
     );
 }
 
@@ -194,7 +267,13 @@ pub fn blank() {
 pub fn row(line: Line) {
     let inner = width() - 2;
     let pad = inner.saturating_sub(line.visible);
-    println!("{}{}{}{}", border("│"), line.rendered, " ".repeat(pad), border("│"));
+    println!(
+        "{}{}{}{}",
+        border("│"),
+        line.rendered,
+        " ".repeat(pad),
+        border("│")
+    );
 }
 
 pub fn divider() {
@@ -240,9 +319,11 @@ pub fn header_panel(badge: &str, brand: &str, left: &str, right: &str) {
         brand: brand.into(),
         left: left.into(),
         tty: std::io::stdout().is_terminal(),
+        done: AtomicUsize::new(0),
+        total: AtomicUsize::new(0),
     });
     drop(state);
-    progress(right);
+    let _ = right;
 }
 
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
@@ -278,7 +359,9 @@ mod tests {
 
     #[test]
     fn line_tracks_visible_separately_from_rendered() {
-        let l = Line::new().plain("hi").styled("X", |s| format!("\x1b[31m{s}\x1b[0m"));
+        let l = Line::new()
+            .plain("hi")
+            .styled("X", |s| format!("\x1b[31m{s}\x1b[0m"));
         assert_eq!(l.visible, 3);
         assert!(l.rendered.contains("hi"));
         assert!(l.rendered.contains("\x1b[31m"));
