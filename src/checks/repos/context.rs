@@ -522,7 +522,11 @@ fn parse_has_github_actions(text: &str) -> bool {
         package_ecosystem: String,
     }
     serde_yaml::from_str::<DependabotFile>(text)
-        .map(|f| f.updates.iter().any(|u| u.package_ecosystem == "github-actions"))
+        .map(|f| {
+            f.updates
+                .iter()
+                .any(|u| u.package_ecosystem == "github-actions")
+        })
         .unwrap_or(false)
 }
 

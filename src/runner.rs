@@ -8,9 +8,8 @@ use crate::checks::orgs::{
 use crate::checks::repos::{
     RepoContext, admin_enforcement, branch_protection, context::RepoListing, dependabot_alerts,
     dependabot_config, direct_collaborators, immutable_branch, linear_history, pinned_actions,
-    pr_reviews,
-    pull_request_target, push_protection, secret_scanning, security_md, signed_commits, webhooks,
-    workflow_permissions, workflow_token,
+    pr_reviews, pull_request_target, push_protection, secret_scanning, security_md, signed_commits,
+    webhooks, workflow_permissions, workflow_token,
 };
 use crate::support::github::{Client, Fetch};
 use crate::support::outcome::{CheckOutcome, Status};
