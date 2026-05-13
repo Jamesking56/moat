@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="./art/logo.png" alt="moat" width="300">
+    <img src="./art/logo.png" alt="moat" width="800">
     <p align="center">
         <a href="https://github.com/nunomaduro/moat/actions"><img alt="GitHub Workflow Status (main)" src="https://github.com/nunomaduro/moat/actions/workflows/ci.yml/badge.svg"></a>
         <a href="https://github.com/nunomaduro/moat/releases"><img alt="Latest Version" src="https://img.shields.io/github/v/release/nunomaduro/moat"></a>
@@ -33,12 +33,10 @@ Download the archive for your platform from the [releases page](https://github.c
 moat audit <account>
 ```
 
-`<account>` can be a GitHub organization, a user, or an `<owner>/<repo>` slug. Use `--only org` to run only org-level checks, or `--only repos` to run only repository-level checks.
+`<account>` can be a GitHub organization, a user, or an `<owner>/<repo>` slug.
 
 ```bash
 moat audit <your-org>
-moat audit <your-org> --only org
-moat audit <your-org> --only repos
 moat audit <owner>/<repo>
 ```
 
