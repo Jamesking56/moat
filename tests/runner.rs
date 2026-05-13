@@ -143,7 +143,7 @@ async fn run_org_checks_completes_against_mocked_server() {
         org: Some(&org),
         repos: &repos,
     };
-    let results = runner::run_checks(&ctx, None);
+    let results = runner::run_checks(&ctx);
     runner::render_posture_panel(&results);
     runner::render_checks_panel(&results, Some(&org), 0, false);
 }
@@ -160,7 +160,7 @@ async fn run_repo_checks_completes_against_mocked_server() {
         org: None,
         repos: &contexts,
     };
-    let results = runner::run_checks(&ctx, None);
+    let results = runner::run_checks(&ctx);
     runner::render_posture_panel(&results);
     runner::render_checks_panel(&results, None, contexts.len(), false);
 }
@@ -180,32 +180,6 @@ async fn full_cli_audit_against_mocked_github() {
         .stdout(predicate::str::contains("Security posture"))
         .stdout(predicate::str::contains("hardened"))
         .stdout(predicate::str::contains("Checks"));
-}
-
-#[tokio::test]
-async fn cli_audit_only_org_skips_repos_section() {
-    let server = MockServer::start().await;
-    stub_org(&server, "acme").await;
-
-    moat()
-        .env("MOAT_GITHUB_API_BASE", server.uri())
-        .args(["audit", "acme", "--only", "org"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Security posture"));
-}
-
-#[tokio::test]
-async fn cli_audit_only_repos_skips_org_section() {
-    let server = MockServer::start().await;
-    stub_org(&server, "acme").await;
-
-    moat()
-        .env("MOAT_GITHUB_API_BASE", server.uri())
-        .args(["audit", "acme", "--only", "repos"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("Security posture"));
 }
 
 #[tokio::test]

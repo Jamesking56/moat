@@ -10,20 +10,11 @@ async fn main() -> Result<()> {
     let client = support::github::Client::new(token)?;
 
     match cli.command {
-        cli::Command::Audit {
-            account,
-            only,
-            verbose,
-        } => {
+        cli::Command::Audit { account, verbose } => {
             if let Some((owner, repo)) = account.split_once('/') {
                 if owner.is_empty() || repo.is_empty() || repo.contains('/') {
                     anyhow::bail!(
                         "invalid target `{account}` — expected `owner/repo` or `account`"
-                    );
-                }
-                if matches!(only, Some(cli::Only::Org)) {
-                    anyhow::bail!(
-                        "`--only org` is not supported when auditing a single repository"
                     );
                 }
                 runner::print_repo_header(owner, repo);
@@ -35,7 +26,7 @@ async fn main() -> Result<()> {
                     org: None,
                     repos: &contexts,
                 };
-                let results = runner::run_checks(&ctx, only);
+                let results = runner::run_checks(&ctx);
                 let active_total = contexts.iter().filter(|c| !c.archived).count();
                 runner::render_checks_panel(&results, None, active_total, verbose);
                 runner::render_posture_panel(&results);
@@ -43,22 +34,13 @@ async fn main() -> Result<()> {
                 let kind = runner::detect_account(&client, &account).await?;
                 runner::print_header(&account, kind);
 
-                let do_org = matches!(only, None | Some(cli::Only::Org))
-                    && matches!(kind, AccountKind::Organization);
-                let do_repos = matches!(only, None | Some(cli::Only::Repos));
+                let do_org = matches!(kind, AccountKind::Organization);
 
-                let listings = if do_repos {
-                    Some(runner::list_repos(&client, &account, kind).await?)
-                } else {
-                    None
-                };
+                let listings = runner::list_repos(&client, &account, kind).await?;
 
-                let mut total_ticks = 0;
+                let mut total_ticks = 1 + runner::REPO_TICKS * listings.len();
                 if do_org {
                     total_ticks += runner::ORG_TICKS;
-                }
-                if let Some(l) = &listings {
-                    total_ticks += 1 + runner::REPO_TICKS * l.len();
                 }
                 support::panel::bump_progress_total(total_ticks);
 
@@ -68,14 +50,9 @@ async fn main() -> Result<()> {
                     None
                 };
 
-                let repo_contexts = if let Some(l) = listings {
-                    Some(runner::fetch_repo_contexts_from(&client, &account, l).await?)
-                } else {
-                    None
-                };
+                let repo_contexts =
+                    runner::fetch_repo_contexts_from(&client, &account, listings).await?;
 
-                let empty: Vec<_> = Vec::new();
-                let repos_slice = repo_contexts.as_deref().unwrap_or(&empty);
                 support::panel::finish_progress(match kind {
                     AccountKind::Organization => "organization",
                     AccountKind::User => "user",
@@ -83,10 +60,10 @@ async fn main() -> Result<()> {
 
                 let ctx = CheckContext {
                     org: org_ctx.as_ref(),
-                    repos: repos_slice,
+                    repos: &repo_contexts,
                 };
-                let results = runner::run_checks(&ctx, only);
-                let active_total = repos_slice.iter().filter(|c| !c.archived).count();
+                let results = runner::run_checks(&ctx);
+                let active_total = repo_contexts.iter().filter(|c| !c.archived).count();
                 runner::render_checks_panel(&results, org_ctx.as_ref(), active_total, verbose);
                 runner::render_posture_panel(&results);
             }

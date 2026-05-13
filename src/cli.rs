@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
@@ -16,17 +16,8 @@ pub enum Command {
     Audit {
         account: String,
 
-        #[arg(long, value_enum)]
-        only: Option<Only>,
-
         /// Display all collaborators and members instead of truncating the list.
         #[arg(short, long)]
         verbose: bool,
     },
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-pub enum Only {
-    Org,
-    Repos,
 }

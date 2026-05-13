@@ -1,7 +1,6 @@
 use crate::checks::org_context::{MemberList, OrgContext};
 use crate::checks::repo_context::{RepoContext, RepoListing};
 use crate::checks::{CHECKS, Check, Scope};
-use crate::cli::Only;
 use crate::support::github::{Client, Fetch};
 use crate::support::outcome::Status;
 use crate::support::panel;
@@ -163,37 +162,24 @@ pub struct CheckResult {
     pub org_only_issue: bool,
 }
 
-pub fn run_checks(ctx: &CheckContext<'_>, only: Option<Only>) -> Vec<CheckResult> {
+pub fn run_checks(ctx: &CheckContext<'_>) -> Vec<CheckResult> {
     let active_total = ctx.repos.iter().filter(|c| !c.archived).count();
 
     CHECKS
         .iter()
-        .filter(|c| scope_matches(c.scope(), ctx, only))
+        .filter(|c| scope_matches(c.scope(), ctx))
         .map(|check| evaluate(check, ctx, active_total))
         .collect()
 }
 
-fn scope_matches(scope: Scope, ctx: &CheckContext<'_>, only: Option<Only>) -> bool {
-    let has_org = ctx.org.is_some();
-    let scope_ok = match scope {
-        Scope::Org => has_org,
-        Scope::Repo => true,
-        Scope::OrgAndRepo => true,
-    };
-    if !scope_ok {
-        return false;
-    }
-    match only {
-        None => true,
-        Some(Only::Org) => matches!(scope, Scope::Org | Scope::OrgAndRepo),
-        Some(Only::Repos) => matches!(scope, Scope::Repo | Scope::OrgAndRepo),
+fn scope_matches(scope: Scope, ctx: &CheckContext<'_>) -> bool {
+    match scope {
+        Scope::Org => ctx.org.is_some(),
+        Scope::Repo | Scope::OrgAndRepo => true,
     }
 }
 
 fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) -> CheckResult {
-    let only_repos_filter = false;
-    let _ = only_repos_filter;
-
     let org_outcome = match (check.org_eval, ctx.org) {
         (Some(f), Some(org)) => Some(f(org)),
         _ => None,
