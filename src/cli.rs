@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::Parser;
 
 #[derive(Parser)]
 #[command(
@@ -7,17 +7,9 @@ use clap::{Parser, Subcommand};
     about = "Supply-chain security auditor for GitHub organizations"
 )]
 pub struct Cli {
-    #[command(subcommand)]
-    pub command: Command,
-}
+    pub account: String,
 
-#[derive(Subcommand)]
-pub enum Command {
-    Audit {
-        account: String,
-
-        /// Display all collaborators and members instead of truncating the list.
-        #[arg(short, long)]
-        verbose: bool,
-    },
+    /// Display all collaborators and members instead of truncating the list.
+    #[arg(short, long)]
+    pub verbose: bool,
 }

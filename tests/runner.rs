@@ -20,6 +20,14 @@ async fn stub_org(server: &MockServer, org: &str) {
         .mount(server)
         .await;
     Mock::given(method("GET"))
+        .and(path(format!("/user/memberships/orgs/{org}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "role": "admin",
+            "state": "active"
+        })))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
         .and(path(format!("/orgs/{org}")))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "two_factor_requirement_enabled": true
@@ -172,7 +180,7 @@ async fn full_cli_audit_against_mocked_github() {
 
     moat()
         .env("MOAT_GITHUB_API_BASE", server.uri())
-        .args(["audit", "acme"])
+        .args(["acme"])
         .assert()
         .success()
         .stdout(predicate::str::contains("moat"))
@@ -197,10 +205,17 @@ async fn cli_audit_user_account_runs_repo_checks_only() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
         .mount(&server)
         .await;
+    Mock::given(method("GET"))
+        .and(path("/user"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "login": "nuno" })),
+        )
+        .mount(&server)
+        .await;
 
     moat()
         .env("MOAT_GITHUB_API_BASE", server.uri())
-        .args(["audit", "nuno"])
+        .args(["nuno"])
         .assert()
         .success()
         .stdout(predicate::str::contains("user"))

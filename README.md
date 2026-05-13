@@ -30,14 +30,14 @@ Download the archive for your platform from the [releases page](https://github.c
 ## Usage
 
 ```bash
-moat audit <account>
+moat <account>
 ```
 
 `<account>` can be a GitHub organization, a user, or an `<owner>/<repo>` slug.
 
 ```bash
-moat audit <your-org>
-moat audit <owner>/<repo>
+moat <your-org>
+moat <owner>/<repo>
 ```
 
 ## Authentication

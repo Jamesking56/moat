@@ -194,6 +194,15 @@ pub struct RepoListing {
     pub private: bool,
     pub default_branch: Option<String>,
     pub security_and_analysis: Option<SecurityAndAnalysis>,
+    pub permissions: Option<RepoPermissions>,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct RepoPermissions {
+    #[serde(default)]
+    pub admin: bool,
+    #[serde(default)]
+    pub maintain: bool,
 }
 
 #[derive(Deserialize, Clone)]

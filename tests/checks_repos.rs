@@ -153,6 +153,7 @@ fn listing(default_branch: Option<&str>, sa: Option<SecurityAndAnalysis>) -> Rep
         private: true,
         default_branch: default_branch.map(String::from),
         security_and_analysis: sa,
+        permissions: None,
     }
 }
 

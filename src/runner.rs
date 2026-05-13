@@ -36,6 +36,81 @@ pub fn print_header(account: &str, kind: AccountKind) {
     panel::header_panel("◈", "moat", account, kind_long);
 }
 
+#[derive(Deserialize)]
+struct ViewerLogin {
+    login: String,
+}
+
+#[derive(Deserialize)]
+struct OrgMembership {
+    role: String,
+    state: String,
+}
+
+fn not_admin_bail(target: &str) -> anyhow::Error {
+    anyhow!(
+        "you are not an admin of `{target}`. moat requires admin access to surface the data it audits — run it on an organization or repository you administer."
+    )
+}
+
+/// Pre-flight: ensure the authenticated viewer can meaningfully audit `account`.
+///
+/// For an org, the viewer must be an active admin. For a user account, the
+/// viewer must be that user. Returns the resolved account kind so callers can
+/// skip a second `detect_account` round-trip.
+pub async fn ensure_viewer_can_audit_account(
+    client: &Client,
+    account: &str,
+) -> Result<AccountKind> {
+    let kind = detect_account(client, account).await?;
+    match kind {
+        AccountKind::Organization => {
+            let path = format!("/user/memberships/orgs/{account}");
+            match client.get_json::<OrgMembership>(&path).await? {
+                Fetch::Ok(m) if m.role == "admin" && m.state == "active" => {}
+                _ => return Err(not_admin_bail(account)),
+            }
+        }
+        AccountKind::User => {
+            let viewer = match client.get_json::<ViewerLogin>("/user").await? {
+                Fetch::Ok(v) => v,
+                _ => bail!(
+                    "could not read authenticated viewer (`GET /user`) — check your token scopes"
+                ),
+            };
+            if !viewer.login.eq_ignore_ascii_case(account) {
+                return Err(not_admin_bail(account));
+            }
+        }
+    }
+    Ok(kind)
+}
+
+/// Pre-flight: ensure the viewer is an admin of the given single repo.
+pub async fn ensure_viewer_can_audit_repo(
+    client: &Client,
+    owner: &str,
+    repo: &str,
+) -> Result<RepoListing> {
+    let listing = match client
+        .get_json::<RepoListing>(&format!("/repos/{owner}/{repo}"))
+        .await?
+    {
+        Fetch::Ok(v) => v,
+        Fetch::Forbidden => return Err(not_admin_bail(&format!("{owner}/{repo}"))),
+        Fetch::NotFound => bail!("no repository named `{owner}/{repo}` was found"),
+    };
+    let is_admin = listing
+        .permissions
+        .as_ref()
+        .map(|p| p.admin)
+        .unwrap_or(false);
+    if !is_admin {
+        return Err(not_admin_bail(&format!("{owner}/{repo}")));
+    }
+    Ok(listing)
+}
+
 pub async fn detect_account(client: &Client, name: &str) -> Result<AccountKind> {
     match client
         .get_json::<AccountType>(&format!("/users/{name}"))
@@ -105,18 +180,8 @@ pub async fn fetch_repo_contexts(
 pub async fn fetch_single_repo_context(
     client: &Client,
     owner: &str,
-    repo: &str,
+    listing: RepoListing,
 ) -> Result<Vec<RepoContext>> {
-    let listing: RepoListing = match client
-        .get_json::<RepoListing>(&format!("/repos/{owner}/{repo}"))
-        .await?
-    {
-        Fetch::Ok(v) => v,
-        Fetch::Forbidden => {
-            bail!("no permission to read `{owner}/{repo}` — check your token scopes")
-        }
-        Fetch::NotFound => bail!("no repository named `{owner}/{repo}` was found"),
-    };
     fetch_contexts(client, owner, vec![listing]).await
 }
 

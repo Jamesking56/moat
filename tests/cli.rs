@@ -37,7 +37,7 @@ fn no_subcommand_errors() {
 #[test]
 fn audit_without_token_fails_with_helpful_message() {
     moat()
-        .args(["audit", "octocat"])
+        .args(["octocat"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("gh").or(predicate::str::contains("GITHUB_TOKEN")));
@@ -45,8 +45,5 @@ fn audit_without_token_fails_with_helpful_message() {
 
 #[test]
 fn unknown_flag_errors() {
-    moat()
-        .args(["audit", "octocat", "--not-a-flag"])
-        .assert()
-        .failure();
+    moat().args(["octocat", "--not-a-flag"]).assert().failure();
 }
