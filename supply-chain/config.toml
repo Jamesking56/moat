@@ -112,10 +112,6 @@ criteria = "safe-to-run"
 version = "0.3.14"
 criteria = "safe-to-deploy"
 
-[[exemptions.errno]]
-version = "0.3.14"
-criteria = "safe-to-run"
-
 [[exemptions.fastrand]]
 version = "2.4.1"
 criteria = "safe-to-run"
@@ -288,10 +284,6 @@ criteria = "safe-to-deploy"
 version = "0.12.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.linux-raw-sys]]
-version = "0.12.1"
-criteria = "safe-to-run"
-
 [[exemptions.litemap]]
 version = "0.8.2"
 criteria = "safe-to-deploy"
@@ -340,10 +332,6 @@ criteria = "safe-to-deploy"
 version = "0.2.37"
 criteria = "safe-to-run"
 
-[[exemptions.proc-macro2]]
-version = "1.0.106"
-criteria = "safe-to-deploy"
-
 [[exemptions.quinn]]
 version = "0.11.9"
 criteria = "safe-to-deploy"
@@ -354,10 +342,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.quinn-udp]]
 version = "0.5.14"
-criteria = "safe-to-deploy"
-
-[[exemptions.quote]]
-version = "1.0.45"
 criteria = "safe-to-deploy"
 
 [[exemptions.r-efi]]
@@ -400,10 +384,6 @@ criteria = "safe-to-deploy"
 version = "1.1.4"
 criteria = "safe-to-deploy"
 
-[[exemptions.rustix]]
-version = "1.1.4"
-criteria = "safe-to-run"
-
 [[exemptions.rustls]]
 version = "0.23.40"
 criteria = "safe-to-deploy"
@@ -445,7 +425,7 @@ version = "1.0.149"
 criteria = "safe-to-deploy"
 
 [[exemptions.serde_spanned]]
-version = "0.6.9"
+version = "1.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.serde_urlencoded]]
@@ -521,19 +501,19 @@ version = "0.7.18"
 criteria = "safe-to-deploy"
 
 [[exemptions.toml]]
-version = "0.8.23"
+version = "1.1.2+spec-1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.toml_datetime]]
-version = "0.6.11"
+version = "1.1.1+spec-1.1.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.toml_edit]]
-version = "0.22.27"
+[[exemptions.toml_parser]]
+version = "1.1.2+spec-1.1.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.toml_write]]
-version = "0.1.2"
+[[exemptions.toml_writer]]
+version = "1.1.1+spec-1.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tower]]
@@ -709,7 +689,7 @@ version = "0.53.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.winnow]]
-version = "0.7.15"
+version = "1.0.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.wiremock]]
