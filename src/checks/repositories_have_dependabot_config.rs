@@ -33,10 +33,10 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
     let mut missing = 0usize;
     let mut without_actions = 0usize;
     for r in ctx.repos {
-        if let WorkflowsState::Loaded(w) = &r.workflows {
-            if w.is_empty() {
-                continue;
-            }
+        if let WorkflowsState::Loaded(w) = &r.workflows
+            && w.is_empty()
+        {
+            continue;
         }
         applicable += 1;
         match &r.dependabot_config {

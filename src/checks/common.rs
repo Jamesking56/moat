@@ -21,7 +21,11 @@ pub fn noun<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
 }
 
 pub fn repos_word(count: usize) -> &'static str {
-    if count == 1 { "repository" } else { "repositories" }
+    if count == 1 {
+        "repository"
+    } else {
+        "repositories"
+    }
 }
 
 pub fn public_repos_word(count: usize) -> &'static str {
@@ -64,14 +68,10 @@ pub fn feature_state_phrase(
             repos_word(total)
         ),
         (Some(true), _) => format!("{feature} is not enabled by default for new repositories"),
-        (None, 0) if total > 0 => format!(
-            "{feature} is enabled on all {total} {}",
-            repos_word(total)
-        ),
-        (None, n) if n > 0 => format!(
-            "{feature} is disabled on {n}/{total} {}",
-            repos_word(total)
-        ),
+        (None, 0) if total > 0 => {
+            format!("{feature} is enabled on all {total} {}", repos_word(total))
+        }
+        (None, n) if n > 0 => format!("{feature} is disabled on {n}/{total} {}", repos_word(total)),
         _ => return None,
     })
 }
@@ -123,10 +123,7 @@ where
 /// Count repos where the chosen branch-protection flag is missing (false or
 /// branch unprotected). Branches we can't inspect (NoPermission, PlanGated)
 /// are skipped.
-pub fn count_repos_missing_branch_flag<F>(
-    repos: &[&crate::checks::RepoContext],
-    pick: F,
-) -> usize
+pub fn count_repos_missing_branch_flag<F>(repos: &[&crate::checks::RepoContext], pick: F) -> usize
 where
     F: Fn(&crate::checks::repo_context::BranchProtectionState) -> Option<bool>,
 {

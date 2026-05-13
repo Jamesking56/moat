@@ -737,4 +737,3 @@ async fn fetch_direct_collaborators(
         Fetch::Forbidden | Fetch::NotFound => Ok(DirectCollaboratorsState::NoPermission),
     }
 }
-

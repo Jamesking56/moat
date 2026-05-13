@@ -17,8 +17,12 @@ pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
 pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
     let org = ctx.org?;
     Some(match org.two_factor_required {
-        TwoFactorState::Required => "every member must sign in with two-factor authentication".into(),
-        TwoFactorState::NotRequired => "members can sign in without two-factor authentication".into(),
+        TwoFactorState::Required => {
+            "every member must sign in with two-factor authentication".into()
+        }
+        TwoFactorState::NotRequired => {
+            "members can sign in without two-factor authentication".into()
+        }
         TwoFactorState::Unknown => return None,
     })
 }

@@ -33,7 +33,10 @@ fn evaluate(state: ForkPrContributorApprovalState) -> CheckOutcome {
 }
 
 fn is_full_approval(state: ForkPrContributorApprovalState) -> bool {
-    matches!(state, ForkPrContributorApprovalState::AllExternalContributors)
+    matches!(
+        state,
+        ForkPrContributorApprovalState::AllExternalContributors
+    )
 }
 
 pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
@@ -43,7 +46,9 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
         .iter()
         .filter(|r| !is_full_approval(r.fork_pr_contributor_approval))
         .count();
-    let org_full = ctx.org.map(|o| is_full_approval(o.fork_pr_contributor_approval));
+    let org_full = ctx
+        .org
+        .map(|o| is_full_approval(o.fork_pr_contributor_approval));
 
     Some(match (org_full, weak) {
         (Some(true), 0) if total > 0 => format!(
@@ -62,7 +67,9 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
             "the org default does not require approval for every external contributor; {n}/{total} {} run fork workflows without it",
             repos_word(total)
         ),
-        (Some(false), _) => "the org default does not require approval for every external contributor".into(),
+        (Some(false), _) => {
+            "the org default does not require approval for every external contributor".into()
+        }
         (None, 0) if total > 0 => format!(
             "fork PR workflows require manual approval for all external contributors across all {total} {}",
             repos_word(total)

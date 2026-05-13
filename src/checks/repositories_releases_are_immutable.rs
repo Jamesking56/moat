@@ -32,7 +32,12 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
     let disabled = ctx
         .repos
         .iter()
-        .filter(|r| matches!(r.release_immutability, ReleaseImmutabilityRepoState::Disabled))
+        .filter(|r| {
+            matches!(
+                r.release_immutability,
+                ReleaseImmutabilityRepoState::Disabled
+            )
+        })
         .count();
     let org = ctx.org.and_then(|o| match o.release_immutability {
         ReleaseImmutabilityState::All => Some("all"),

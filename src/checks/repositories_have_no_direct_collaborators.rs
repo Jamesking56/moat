@@ -31,11 +31,11 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
     let mut bad_repos = 0usize;
     let mut total_direct = 0usize;
     for r in ctx.repos {
-        if let DirectCollaboratorsState::Ok(v) = &r.direct_collaborators {
-            if !v.is_empty() {
-                bad_repos += 1;
-                total_direct += v.len();
-            }
+        if let DirectCollaboratorsState::Ok(v) = &r.direct_collaborators
+            && !v.is_empty()
+        {
+            bad_repos += 1;
+            total_direct += v.len();
         }
     }
 

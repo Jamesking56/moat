@@ -17,9 +17,9 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
 }
 
 pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
-    let org_off = ctx.org.map(|o| {
-        !matches!(o.push_protection_default, FeatureDefaultState::Enabled)
-    });
+    let org_off = ctx
+        .org
+        .map(|o| !matches!(o.push_protection_default, FeatureDefaultState::Enabled));
     feature_state_phrase(
         "secret push protection",
         ctx.repos,

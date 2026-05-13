@@ -651,4 +651,3 @@ fn split_how_to_fix(path: &str) -> (&str, Option<&str>) {
         (path.trim_end_matches('.').trim_end(), None)
     }
 }
-

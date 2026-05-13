@@ -232,7 +232,10 @@ impl OrgContext {
                 fetch_outside_collaborators(client, org),
             ),
             traced("organization admins", fetch_logins(client, &admins_path)),
-            traced("organization webhooks", common::fetch_webhooks(client, &hooks_path)),
+            traced(
+                "organization webhooks",
+                common::fetch_webhooks(client, &hooks_path)
+            ),
             traced(
                 "private vulnerability reporting default",
                 fetch_org_private_vulnerability_reporting(client, org),
