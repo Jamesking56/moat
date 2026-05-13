@@ -394,28 +394,82 @@ async fn fetch_branch_protection(
     repo: &str,
     branch: &str,
 ) -> Result<BranchProtectionState> {
-    let path = format!("/repos/{org}/{repo}/branches/{branch}/protection");
-    Ok(
-        match client
-            .get_json_plan_aware::<BranchProtection>(&path)
-            .await?
-        {
-            Fetch403::Ok(bp) => BranchProtectionState::Protected {
-                signed_commits: bp.required_signatures.map(|s| s.enabled).unwrap_or(false),
-                pr_reviews: bp.required_pull_request_reviews.is_some(),
-                enforce_admins: bp.enforce_admins.map(|e| e.enabled).unwrap_or(false),
-                required_linear_history: bp
-                    .required_linear_history
-                    .map(|e| e.enabled)
-                    .unwrap_or(false),
-                allow_force_pushes: bp.allow_force_pushes.map(|e| e.enabled).unwrap_or(false),
-                allow_deletions: bp.allow_deletions.map(|e| e.enabled).unwrap_or(false),
-            },
-            Fetch403::NotFound => BranchProtectionState::Unprotected,
-            Fetch403::Forbidden => BranchProtectionState::NoPermission,
-            Fetch403::PlanGated => BranchProtectionState::PlanGated,
+    let classic_path = format!("/repos/{org}/{repo}/branches/{branch}/protection");
+    let (classic, rules) = tokio::try_join!(
+        client.get_json_plan_aware::<BranchProtection>(&classic_path),
+        fetch_branch_rules(client, org, repo, branch),
+    )?;
+
+    Ok(match classic {
+        Fetch403::Ok(bp) => BranchProtectionState::Protected {
+            signed_commits: bp.required_signatures.map(|s| s.enabled).unwrap_or(false)
+                || rules.signed_commits,
+            pr_reviews: bp.required_pull_request_reviews.is_some() || rules.pr_reviews,
+            enforce_admins: bp.enforce_admins.map(|e| e.enabled).unwrap_or(false) || rules.any,
+            required_linear_history: bp
+                .required_linear_history
+                .map(|e| e.enabled)
+                .unwrap_or(false)
+                || rules.required_linear_history,
+            allow_force_pushes: bp.allow_force_pushes.map(|e| e.enabled).unwrap_or(false)
+                && !rules.non_fast_forward,
+            allow_deletions: bp.allow_deletions.map(|e| e.enabled).unwrap_or(false)
+                && !rules.deletion,
         },
-    )
+        Fetch403::NotFound if rules.any => BranchProtectionState::Protected {
+            signed_commits: rules.signed_commits,
+            pr_reviews: rules.pr_reviews,
+            enforce_admins: true,
+            required_linear_history: rules.required_linear_history,
+            allow_force_pushes: !rules.non_fast_forward,
+            allow_deletions: !rules.deletion,
+        },
+        Fetch403::NotFound => BranchProtectionState::Unprotected,
+        Fetch403::Forbidden => BranchProtectionState::NoPermission,
+        Fetch403::PlanGated => BranchProtectionState::PlanGated,
+    })
+}
+
+#[derive(Deserialize)]
+struct RuleEntry {
+    #[serde(rename = "type")]
+    rule_type: String,
+}
+
+#[derive(Default)]
+struct RulesetFlags {
+    any: bool,
+    signed_commits: bool,
+    pr_reviews: bool,
+    required_linear_history: bool,
+    non_fast_forward: bool,
+    deletion: bool,
+}
+
+async fn fetch_branch_rules(
+    client: &Client,
+    org: &str,
+    repo: &str,
+    branch: &str,
+) -> Result<RulesetFlags> {
+    let path = format!("/repos/{org}/{repo}/rules/branches/{branch}");
+    let entries = match client.get_json::<Vec<RuleEntry>>(&path).await? {
+        Fetch::Ok(v) => v,
+        Fetch::NotFound | Fetch::Forbidden => return Ok(RulesetFlags::default()),
+    };
+    let mut flags = RulesetFlags::default();
+    for entry in entries {
+        flags.any = true;
+        match entry.rule_type.as_str() {
+            "required_signatures" => flags.signed_commits = true,
+            "pull_request" => flags.pr_reviews = true,
+            "required_linear_history" => flags.required_linear_history = true,
+            "non_fast_forward" => flags.non_fast_forward = true,
+            "deletion" => flags.deletion = true,
+            _ => {}
+        }
+    }
+    Ok(flags)
 }
 
 #[derive(Deserialize)]
