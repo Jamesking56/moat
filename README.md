@@ -1,21 +1,26 @@
-# moat
+<p align="center">
+    <img src="./art/logo.png" alt="moat" width="300">
+    <p align="center">
+        <a href="https://github.com/nunomaduro/moat/actions"><img alt="GitHub Workflow Status (main)" src="https://github.com/nunomaduro/moat/actions/workflows/ci.yml/badge.svg"></a>
+        <a href="https://github.com/nunomaduro/moat/releases"><img alt="Latest Version" src="https://img.shields.io/github/v/release/nunomaduro/moat"></a>
+        <a href="https://github.com/nunomaduro/moat/blob/0.x/LICENSE"><img alt="License" src="https://img.shields.io/github/license/nunomaduro/moat"></a>
+    </p>
+</p>
 
-Supply-chain security auditor for GitHub organizations.
+## Introduction
 
-`moat` audits a GitHub user or organization against a set of supply-chain hardening checks — the kind of controls you want in place before a malicious dependency, a compromised maintainer account, or a leaked token turns into an incident.
+**moat** is a supply-chain security auditor for GitHub organizations. It works with any GitHub **user**, **organization**, or **repository** — auditing the controls you want in place before a malicious dependency, a compromised maintainer account, or a leaked token turns into an incident.
 
-## Install
+It checks **two-factor authentication**, **branch protection**, **signed commits**, **secret scanning**, **Dependabot alerts**, **workflow permissions**, **pinned actions**, **repository webhooks**, and more. Zero config — just install and run.
+
+## Installation
+
+> **Works with any GitHub organization, user, or repository.** A `GITHUB_TOKEN`, `GH_TOKEN`, or [GitHub CLI](https://cli.github.com) login is required.
 
 ### Homebrew (macOS / Linux)
 
-```sh
+```bash
 brew install nunomaduro/tap/moat
-```
-
-### Cargo
-
-```sh
-cargo install moat
 ```
 
 ### Prebuilt binaries
@@ -24,20 +29,18 @@ Download the archive for your platform from the [releases page](https://github.c
 
 ## Usage
 
-```sh
+```bash
 moat audit <account>
 ```
 
-Examples:
+`<account>` can be a GitHub organization, a user, or an `<owner>/<repo>` slug. Use `--only org` to run only org-level checks, or `--only repos` to run only repository-level checks.
 
-```sh
+```bash
 moat audit <your-org>
 moat audit <your-org> --only org
 moat audit <your-org> --only repos
 moat audit <owner>/<repo>
 ```
-
-`<account>` can be a GitHub organization or a user. `--only org` runs only org-level checks; `--only repos` runs only repository-level checks. Passing `<owner>/<repo>` (e.g. `moat audit nunomaduro/version`) audits a single repository and skips org-level checks.
 
 ## Authentication
 
@@ -50,13 +53,14 @@ moat audit <owner>/<repo>
 For organization audits the token needs:
 
 - `read:org` — list members, admins, outside collaborators, 2FA enforcement
-- `repo` — read branch protection, required reviews, secret scanning, Dependabot alerts, workflow files, repository contents (SECURITY.md), and repository webhooks (the webhook check requires admin access on the repo; it is skipped where the token lacks it)
+- `repo` — read branch protection, required reviews, secret scanning, Dependabot alerts, workflow files, repository contents (`SECURITY.md`), and repository webhooks
 
 A classic PAT or a fine-grained token with the equivalent permissions both work. For user accounts (no org scope), only repo read access is required.
 
 ## Checks
 
 ### Organization
+
 - Two-factor authentication required for all members
 - Members without 2FA enabled
 - Number of organization admins (owners)
@@ -64,6 +68,7 @@ A classic PAT or a fine-grained token with the equivalent permissions both work.
 - Default repository permission for org members (`read`/`none` pass, `write`/`admin` fail)
 
 ### Repository
+
 - Branch protection enabled on the default branch
 - Pull request reviews required before merge
 - Signed commits required
@@ -71,9 +76,9 @@ A classic PAT or a fine-grained token with the equivalent permissions both work.
 - Push protection enabled
 - Dependabot alerts enabled
 - Default `GITHUB_TOKEN` workflow permissions (read vs. write)
-- Branch protection is enforced on admins (no bypass on the default branch)
+- Branch protection enforced on admins (no bypass on the default branch)
 - Default branch requires linear history and disallows force pushes and deletions
-- Every `uses:` in `.github/workflows/*.yml` is pinned to a 40-char commit SHA
+- Every `uses:` in `.github/workflows/*.yml` pinned to a 40-char commit SHA
 - No workflow combines `pull_request_target` with a checkout of an untrusted PR head ref
 - Every workflow declares a top-level `permissions:` block that is not `write-all`
 - Repository webhooks use HTTPS and have a secret configured
@@ -91,11 +96,23 @@ pinned_actions = "off"
 
 Check IDs match the repository checks listed above (`branch_protection`, `signed_commits`, `pr_reviews`, `workflow_token`, `secret_scanning`, `push_protection`, `dependabot_alerts`, `admin_enforcement`, `branch_history`, `pinned_actions`, `pull_request_target`, `workflow_permissions`, `webhooks`, `security_md`). Values are `"on"` (default) or `"off"`.
 
-## Exit codes
+## Exit Codes
 
 - `0` — all checks passed
 - non-zero — at least one check failed or an error occurred
 
+## Contributing
+
+Thank you for considering contributing to moat! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+
+## Code of Conduct
+
+In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+
+## Security Vulnerabilities
+
+Please review [our security policy](https://github.com/nunomaduro/moat/security/policy) on how to report security vulnerabilities.
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+moat is open-sourced software licensed under the [MIT license](LICENSE).
