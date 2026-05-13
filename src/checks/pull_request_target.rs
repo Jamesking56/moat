@@ -8,6 +8,7 @@ pub const WHY_ENABLE: &str = "`pull_request_target` runs with the base repo's se
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     let workflows = match &ctx.workflows {
+        WorkflowsState::Loaded(w) if w.is_empty() => return CheckOutcome::skipped("n/a"),
         WorkflowsState::Loaded(w) => w,
         WorkflowsState::NoPermission => return CheckOutcome::skipped("?"),
     };

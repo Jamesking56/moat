@@ -8,6 +8,7 @@ pub const WHY_ENABLE: &str = "tags and branches are mutable — when tj-actions/
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     let workflows = match &ctx.workflows {
+        WorkflowsState::Loaded(w) if w.is_empty() => return CheckOutcome::skipped("n/a"),
         WorkflowsState::Loaded(w) => w,
         WorkflowsState::NoPermission => return CheckOutcome::skipped("?"),
     };

@@ -4,8 +4,8 @@ use moat::checks::repo_context::{
     WebhooksState, WorkflowTokenState,
 };
 use moat::checks::{
-    dependabot_alerts, direct_collaborators, pr_reviews, protected_release_branches,
-    push_protection, secret_scanning, signed_commits, workflow_token,
+    dependabot_alerts, dependabot_config, direct_collaborators, pr_reviews,
+    protected_release_branches, push_protection, secret_scanning, signed_commits, workflow_token,
 };
 use moat::support::github::Client;
 use moat::support::outcome::Status;
@@ -111,6 +111,14 @@ fn workflow_token_states() {
     assert_eq!(workflow_token::repo_check(&r).status, Status::Pass);
     assert_eq!(workflow_token::repo_check(&w).status, Status::Fail);
     assert_eq!(workflow_token::repo_check(&n).status, Status::Skipped);
+}
+
+#[test]
+fn dependabot_config_skipped_when_no_workflows() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.workflows = WorkflowsState::Loaded(Vec::new());
+    c.dependabot_config = DependabotConfigState::Missing;
+    assert_eq!(dependabot_config::repo_check(&c).status, Status::Skipped);
 }
 
 #[test]
