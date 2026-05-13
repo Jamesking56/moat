@@ -245,9 +245,7 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         Status::Pass
     };
 
-    let org_only_issue = (org_failed || org_warned)
-        && !any_repo_fail
-        && !any_repo_warn;
+    let org_only_issue = (org_failed || org_warned) && !any_repo_fail && !any_repo_warn;
 
     let summary = build_summary(
         check,
@@ -500,7 +498,8 @@ pub fn render_checks_panel(
         let has_repo_failures = !r.affected_repos.is_empty();
         let show_org = r.org_default_issue;
         let show_repo = has_repo_failures && repo_part.is_some();
-        let show_generic = !show_org && !show_repo && matches!(r.status, Status::Fail | Status::Warn);
+        let show_generic =
+            !show_org && !show_repo && matches!(r.status, Status::Fail | Status::Warn);
 
         let mut wrote_section = false;
         if show_org {
@@ -517,19 +516,17 @@ pub fn render_checks_panel(
             }
             wrote_section = true;
         }
-        if show_repo {
-            if let Some(rp) = repo_part {
-                if wrote_section {
-                    panel::blank();
-                }
-                let head = panel::Line::new()
-                    .space(5)
-                    .styled("Fix each affected repository:", panel::text_bold);
-                panel::row(head);
-                for line in panel::wrap(rp, text_width.saturating_sub(2)) {
-                    let l = panel::Line::new().space(7).styled(&line, panel::info);
-                    panel::row(l);
-                }
+        if show_repo && let Some(rp) = repo_part {
+            if wrote_section {
+                panel::blank();
+            }
+            let head = panel::Line::new()
+                .space(5)
+                .styled("Fix each affected repository:", panel::text_bold);
+            panel::row(head);
+            for line in panel::wrap(rp, text_width.saturating_sub(2)) {
+                let l = panel::Line::new().space(7).styled(&line, panel::info);
+                panel::row(l);
             }
         }
         if show_generic {

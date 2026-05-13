@@ -44,7 +44,9 @@ impl FeatureDefaultState {
         match self {
             Self::Enabled => CheckOutcome::pass("applied by default to new repositories"),
             Self::Disabled => CheckOutcome::fail("disabled"),
-            Self::NotSet => CheckOutcome::warn("no default security configuration for new repositories"),
+            Self::NotSet => {
+                CheckOutcome::warn("no default security configuration for new repositories")
+            }
             Self::Unknown => CheckOutcome::skipped(unknown_label),
         }
     }
