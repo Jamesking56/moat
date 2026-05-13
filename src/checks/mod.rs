@@ -13,6 +13,7 @@ pub mod linear_history;
 pub mod members_without_2fa;
 pub mod pinned_actions;
 pub mod pr_reviews;
+pub mod private_vulnerability_reporting;
 pub mod protected_release_branches;
 pub mod pull_request_target;
 pub mod push_protection;
@@ -228,6 +229,14 @@ pub static CHECKS: &[Check] = &[
         why_enable: security_md::WHY_ENABLE,
         org_eval: None,
         repo_eval: Some(security_md::repo_check),
+    },
+    Check {
+        id: "private_vulnerability_reporting",
+        label: private_vulnerability_reporting::LABEL,
+        how_to_fix: private_vulnerability_reporting::HOW_TO_FIX,
+        why_enable: private_vulnerability_reporting::WHY_ENABLE,
+        org_eval: None,
+        repo_eval: Some(private_vulnerability_reporting::repo_check),
     },
     Check {
         id: "dependabot_config",

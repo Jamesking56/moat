@@ -35,6 +35,7 @@ fn ctx(branch: BranchProtectionState, token: WorkflowTokenState) -> RepoContext 
         secret_scanning: FeatureState::Enabled,
         push_protection: FeatureState::Enabled,
         dependabot_alerts: FeatureState::Enabled,
+        private_vulnerability_reporting: FeatureState::Enabled,
         workflows: WorkflowsState::Loaded(Vec::new()),
         security_md: FilePresence::Absent,
         dependabot_config: DependabotConfigState::Missing,

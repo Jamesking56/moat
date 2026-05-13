@@ -2,7 +2,7 @@ use crate::checks::repo_context::{BranchEval, BranchProtectionState, RepoContext
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "immutable branches";
-pub const HOW_TO_FIX: &str = "github → repository → settings → branches → edit ruleset → block force pushes + restrict deletions.";
+pub const HOW_TO_FIX: &str = "github → repository → settings → rules → edit the ruleset for your release branches → under \"Rules\", enable both \"Block force pushes\" and \"Restrict deletions\".";
 pub const WHY_ENABLE: &str = "force pushes and branch deletions rewrite history — an attacker (or a tired maintainer) can erase the audit trail of a malicious commit or quietly replace a tagged release with a different tree.";
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {

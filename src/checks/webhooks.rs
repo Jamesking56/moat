@@ -2,7 +2,7 @@ use crate::checks::repo_context::{RepoContext, WebhooksState};
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "webhooks";
-pub const HOW_TO_FIX: &str = "github → repository → settings → webhooks → edit each → switch to `https://`, set a secret, verify signatures on the receiver.";
+pub const HOW_TO_FIX: &str = "github → repository → settings → webhooks → edit each webhook → set \"Payload URL\" to an `https://` endpoint, set a \"Secret\", and verify signatures on the receiver.";
 pub const WHY_ENABLE: &str = "plain-http hooks leak payloads (and any secrets inside them) to any network on the path, and a hook without a shared secret has no way to prove the request actually came from github.";
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
