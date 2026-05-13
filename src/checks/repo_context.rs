@@ -19,6 +19,13 @@ pub enum ReleaseImmutabilityRepoState {
     Unknown,
 }
 
+#[derive(Clone, Copy)]
+pub enum SHAPinningState {
+    Enforced,
+    NotEnforced,
+    Unknown,
+}
+
 async fn traced<F, T>(repo: &str, label: &str, fut: F) -> T
 where
     F: std::future::Future<Output = T>,
@@ -44,6 +51,7 @@ pub struct RepoContext {
     pub direct_collaborators: DirectCollaboratorsState,
     pub release_immutability: ReleaseImmutabilityRepoState,
     pub fork_pr_contributor_approval: ForkPrContributorApprovalState,
+    pub sha_pinning: SHAPinningState,
     pub config: Config,
 }
 
@@ -257,6 +265,7 @@ impl RepoContext {
                 direct_collaborators: DirectCollaboratorsState::NoPermission,
                 release_immutability: ReleaseImmutabilityRepoState::Unknown,
                 fork_pr_contributor_approval: ForkPrContributorApprovalState::Unknown,
+                sha_pinning: SHAPinningState::Unknown,
                 config: Config::default(),
             });
         }
@@ -290,6 +299,7 @@ impl RepoContext {
             direct_collaborators,
             release_immutability,
             fork_pr_contributor_approval,
+            sha_pinning,
         ) = tokio::try_join!(
             traced(
                 &repo.name,
@@ -346,6 +356,11 @@ impl RepoContext {
                 "fork PR contributor approval",
                 fetch_fork_pr_contributor_approval(client, org, &repo.name),
             ),
+            traced(
+                &repo.name,
+                "SHA pinning enforcement",
+                fetch_sha_pinning(client, org, &repo.name),
+            ),
         )?;
 
         let branch_protections = BranchProtections { branches };
@@ -373,6 +388,7 @@ impl RepoContext {
             direct_collaborators,
             release_immutability,
             fork_pr_contributor_approval,
+            sha_pinning,
             config,
         })
     }
@@ -431,6 +447,28 @@ async fn fetch_fork_pr_contributor_approval(
                 None => ForkPrContributorApprovalState::Unknown,
             },
             Fetch::NotFound | Fetch::Forbidden => ForkPrContributorApprovalState::Unknown,
+        },
+    )
+}
+
+#[derive(Deserialize)]
+struct ActionsPermissions {
+    #[serde(default)]
+    sha_pinning_required: Option<bool>,
+}
+
+async fn fetch_sha_pinning(client: &Client, org: &str, repo: &str) -> Result<SHAPinningState> {
+    Ok(
+        match client
+            .get_json::<ActionsPermissions>(&format!("/repos/{org}/{repo}/actions/permissions"))
+            .await?
+        {
+            Fetch::Ok(p) => match p.sha_pinning_required {
+                Some(true) => SHAPinningState::Enforced,
+                Some(false) => SHAPinningState::NotEnforced,
+                None => SHAPinningState::Unknown,
+            },
+            Fetch::NotFound | Fetch::Forbidden => SHAPinningState::Unknown,
         },
     )
 }

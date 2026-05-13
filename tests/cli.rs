@@ -16,7 +16,7 @@ fn help_lists_audit_subcommand() {
         .arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("audit"))
+        .stdout(predicate::str::contains("ACCOUNT"))
         .stdout(predicate::str::contains("moat"));
 }
 

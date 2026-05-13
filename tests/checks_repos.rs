@@ -2,7 +2,7 @@ use moat::checks::org_context::ForkPrContributorApprovalState;
 use moat::checks::repo_context::{
     BranchProtectionState, BranchProtections, DependabotConfigState, DirectCollaboratorsState,
     FeatureState, FeatureStatus, FilePresence, ReleaseImmutabilityRepoState, RepoContext,
-    RepoListing, SecurityAndAnalysis, WebhooksState, WorkflowTokenState,
+    RepoListing, SHAPinningState, SecurityAndAnalysis, WebhooksState, WorkflowTokenState,
 };
 use moat::checks::{
     repositories_actions_workflow_token_is_read_only as workflow_token,
@@ -51,6 +51,7 @@ fn ctx(branch: BranchProtectionState, token: WorkflowTokenState) -> RepoContext 
         direct_collaborators: DirectCollaboratorsState::Ok(Vec::new()),
         release_immutability: ReleaseImmutabilityRepoState::Enabled,
         fork_pr_contributor_approval: ForkPrContributorApprovalState::AllExternalContributors,
+        sha_pinning: SHAPinningState::Enforced,
         config: moat::config::Config::default(),
     }
 }

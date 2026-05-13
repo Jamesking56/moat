@@ -4,7 +4,7 @@ use clap::Parser;
 #[command(
     name = "moat",
     version,
-    about = "Supply-chain security auditor for GitHub organizations"
+    about = "supply-chain hygiene for your github organization & repositories"
 )]
 pub struct Cli {
     pub account: String,
