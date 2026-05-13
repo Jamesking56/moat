@@ -177,9 +177,9 @@ async fn full_cli_audit_against_mocked_github() {
         .success()
         .stdout(predicate::str::contains("moat"))
         .stdout(predicate::str::contains("acme"))
-        .stdout(predicate::str::contains("Security posture"))
+        .stdout(predicate::str::contains("security posture"))
         .stdout(predicate::str::contains("hardened"))
-        .stdout(predicate::str::contains("Checks"));
+        .stdout(predicate::str::contains("checks"));
 }
 
 #[tokio::test]
@@ -204,5 +204,5 @@ async fn cli_audit_user_account_runs_repo_checks_only() {
         .assert()
         .success()
         .stdout(predicate::str::contains("user"))
-        .stdout(predicate::str::contains("Security posture"));
+        .stdout(predicate::str::contains("security posture"));
 }

@@ -62,13 +62,13 @@ mod tests {
         let cfg = Config::parse(
             r#"
                 [checks]
-                signed_commits = "off"
-                pinned_actions = "on"
+                repositories_commits_are_signed = "off"
+                repositories_workflow_actions_are_pinned = "on"
             "#,
         )
         .unwrap();
-        assert!(cfg.is_off("signed_commits"));
-        assert!(!cfg.is_off("pinned_actions"));
+        assert!(cfg.is_off("repositories_commits_are_signed"));
+        assert!(!cfg.is_off("repositories_workflow_actions_are_pinned"));
     }
 
     #[test]
@@ -82,7 +82,7 @@ mod tests {
         let err = Config::parse(
             r#"
                 [checks]
-                signed_commits = "warning"
+                repositories_commits_are_signed = "warning"
             "#,
         )
         .unwrap_err();

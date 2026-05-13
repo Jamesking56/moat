@@ -7,7 +7,17 @@ use anyhow::Result;
 use futures::future::try_join_all;
 use serde::Deserialize;
 
-pub use crate::checks::common::WorkflowTokenState;
+pub use crate::checks::common::{
+    FeatureState, FilePresence, WebhookInfo, WebhooksState, WorkflowTokenState,
+};
+pub use crate::checks::org_context::ForkPrContributorApprovalState;
+
+#[derive(Clone, Copy)]
+pub enum ReleaseImmutabilityRepoState {
+    Enabled,
+    Disabled,
+    Unknown,
+}
 
 async fn traced<F, T>(repo: &str, label: &str, fut: F) -> T
 where
@@ -32,6 +42,8 @@ pub struct RepoContext {
     pub dependabot_config: DependabotConfigState,
     pub webhooks: WebhooksState,
     pub direct_collaborators: DirectCollaboratorsState,
+    pub release_immutability: ReleaseImmutabilityRepoState,
+    pub fork_pr_contributor_approval: ForkPrContributorApprovalState,
     pub config: Config,
 }
 
@@ -162,51 +174,15 @@ pub enum BranchEval {
     PlanGated,
 }
 
-#[derive(Clone, Copy)]
-pub enum FeatureState {
-    Enabled,
-    Disabled,
-    Unknown,
-    PlanGated,
-}
-
-impl FeatureState {
-    pub fn to_outcome(&self) -> CheckOutcome {
-        match self {
-            FeatureState::Enabled => CheckOutcome::pass("✓"),
-            FeatureState::Disabled => CheckOutcome::fail("✗"),
-            FeatureState::Unknown => CheckOutcome::skipped("?"),
-            FeatureState::PlanGated => CheckOutcome::skipped("n/a (plan)"),
-        }
-    }
-}
-
-pub enum FilePresence {
-    Present,
-    Absent,
-    Unknown,
-}
-
 pub enum DependabotConfigState {
     Ok { github_actions: bool },
     Missing,
     Unknown,
 }
 
-pub enum WebhooksState {
-    Ok(Vec<WebhookInfo>),
-    NoPermission,
-}
-
 pub enum DirectCollaboratorsState {
     Ok(Vec<String>),
     NoPermission,
-}
-
-#[derive(Clone)]
-pub struct WebhookInfo {
-    pub url: String,
-    pub has_secret: bool,
 }
 
 #[derive(Deserialize, Clone)]
@@ -251,19 +227,6 @@ struct WorkflowPerms {
     default_workflow_permissions: String,
 }
 
-#[derive(Deserialize)]
-struct Webhook {
-    config: WebhookConfig,
-}
-
-#[derive(Deserialize)]
-struct WebhookConfig {
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default)]
-    secret: Option<String>,
-}
-
 impl RepoContext {
     pub async fn fetch(client: &Client, org: &str, repo: RepoListing) -> Result<Self> {
         if repo.fork {
@@ -283,6 +246,8 @@ impl RepoContext {
                 dependabot_config: DependabotConfigState::Unknown,
                 webhooks: WebhooksState::NoPermission,
                 direct_collaborators: DirectCollaboratorsState::NoPermission,
+                release_immutability: ReleaseImmutabilityRepoState::Unknown,
+                fork_pr_contributor_approval: ForkPrContributorApprovalState::Unknown,
                 config: Config::default(),
             });
         }
@@ -301,6 +266,8 @@ impl RepoContext {
             compute_release_branches(&repo.default_branch, &config, branch_entries);
         release_branch_names.sort();
 
+        let webhooks_path = format!("/repos/{org}/{}/hooks", repo.name);
+
         // Phase 2: every remaining endpoint runs concurrently.
         let (
             branches,
@@ -312,6 +279,8 @@ impl RepoContext {
             dependabot_config,
             webhooks,
             direct_collaborators,
+            release_immutability,
+            fork_pr_contributor_approval,
         ) = tokio::try_join!(
             traced(
                 &repo.name,
@@ -341,7 +310,7 @@ impl RepoContext {
             traced(
                 &repo.name,
                 "SECURITY.md",
-                locate_security_md(client, org, &repo.name),
+                common::locate_security_md(client, org, &repo.name),
             ),
             traced(
                 &repo.name,
@@ -351,12 +320,22 @@ impl RepoContext {
             traced(
                 &repo.name,
                 "webhooks",
-                fetch_webhooks(client, org, &repo.name),
+                common::fetch_webhooks(client, &webhooks_path),
             ),
             traced(
                 &repo.name,
                 "direct collaborators",
                 fetch_direct_collaborators(client, org, &repo.name, repo.private),
+            ),
+            traced(
+                &repo.name,
+                "release immutability",
+                fetch_release_immutability(client, org, &repo.name),
+            ),
+            traced(
+                &repo.name,
+                "fork PR contributor approval",
+                fetch_fork_pr_contributor_approval(client, org, &repo.name),
             ),
         )?;
 
@@ -383,9 +362,68 @@ impl RepoContext {
             dependabot_config,
             webhooks,
             direct_collaborators,
+            release_immutability,
+            fork_pr_contributor_approval,
             config,
         })
     }
+}
+
+#[derive(Deserialize)]
+struct ImmutableReleasesRepo {
+    enabled: bool,
+}
+
+async fn fetch_release_immutability(
+    client: &Client,
+    org: &str,
+    repo: &str,
+) -> Result<ReleaseImmutabilityRepoState> {
+    Ok(
+        match client
+            .get_json::<ImmutableReleasesRepo>(&format!("/repos/{org}/{repo}/immutable-releases"))
+            .await?
+        {
+            Fetch::Ok(r) if r.enabled => ReleaseImmutabilityRepoState::Enabled,
+            Fetch::Ok(_) => ReleaseImmutabilityRepoState::Disabled,
+            Fetch::NotFound | Fetch::Forbidden => ReleaseImmutabilityRepoState::Unknown,
+        },
+    )
+}
+
+#[derive(Deserialize)]
+struct ForkPrApprovalRepo {
+    approval_policy: Option<String>,
+}
+
+async fn fetch_fork_pr_contributor_approval(
+    client: &Client,
+    org: &str,
+    repo: &str,
+) -> Result<ForkPrContributorApprovalState> {
+    Ok(
+        match client
+            .get_json::<ForkPrApprovalRepo>(&format!(
+                "/repos/{org}/{repo}/actions/permissions/fork-pr-contributor-approval"
+            ))
+            .await?
+        {
+            Fetch::Ok(r) => match r.approval_policy.as_deref() {
+                Some("all_external_contributors") => {
+                    ForkPrContributorApprovalState::AllExternalContributors
+                }
+                Some("first_time_contributors") => {
+                    ForkPrContributorApprovalState::FirstTimeContributors
+                }
+                Some("first_time_contributors_new_to_github") => {
+                    ForkPrContributorApprovalState::FirstTimeContributorsNewToGithub
+                }
+                Some(_) => ForkPrContributorApprovalState::Other,
+                None => ForkPrContributorApprovalState::Unknown,
+            },
+            Fetch::NotFound | Fetch::Forbidden => ForkPrContributorApprovalState::Unknown,
+        },
+    )
 }
 
 async fn fetch_branch_protection(
@@ -678,20 +716,6 @@ fn parse_has_github_actions(text: &str) -> bool {
         .unwrap_or(false)
 }
 
-async fn locate_security_md(client: &Client, org: &str, repo: &str) -> Result<FilePresence> {
-    for path in ["SECURITY.md", ".github/SECURITY.md", "docs/SECURITY.md"] {
-        match client
-            .get_presence(&format!("/repos/{org}/{repo}/contents/{path}"))
-            .await?
-        {
-            Fetch::Ok(_) => return Ok(FilePresence::Present),
-            Fetch::Forbidden => return Ok(FilePresence::Unknown),
-            Fetch::NotFound => {}
-        }
-    }
-    Ok(FilePresence::Absent)
-}
-
 async fn fetch_direct_collaborators(
     client: &Client,
     org: &str,
@@ -714,19 +738,3 @@ async fn fetch_direct_collaborators(
     }
 }
 
-async fn fetch_webhooks(client: &Client, org: &str, repo: &str) -> Result<WebhooksState> {
-    match client
-        .get_paginated::<Webhook>(&format!("/repos/{org}/{repo}/hooks"))
-        .await?
-    {
-        Fetch::Ok(v) => Ok(WebhooksState::Ok(
-            v.into_iter()
-                .map(|h| WebhookInfo {
-                    url: h.config.url.unwrap_or_default(),
-                    has_secret: h.config.secret.is_some(),
-                })
-                .collect(),
-        )),
-        Fetch::Forbidden | Fetch::NotFound => Ok(WebhooksState::NoPermission),
-    }
-}

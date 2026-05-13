@@ -190,11 +190,18 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
     let mut repo_skipped = 0usize;
     let mut repo_warned = 0usize;
     let mut repo_applicable = 0usize;
+    let mut active_repos: Vec<&RepoContext> = Vec::new();
     if let Some(f) = check.repo_eval {
         for r in ctx.repos {
             if r.archived || r.config.is_off(check.id) {
                 continue;
             }
+            if let Some(pred) = check.applies_to_repo
+                && !pred(r)
+            {
+                continue;
+            }
+            active_repos.push(r);
             repo_applicable += 1;
             let outcome = f(r);
             match outcome.status {
@@ -243,15 +250,10 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         org_only_issue,
     );
 
-    let org_note = org_outcome.as_ref().and_then(|o| {
-        let s = o.summary.trim();
-        if s.is_empty() {
-            None
-        } else {
-            Some(s.to_string())
-        }
+    let state_note = (check.state_note)(crate::checks::StateCtx {
+        org: ctx.org,
+        repos: &active_repos,
     });
-    let state_note = org_note;
 
     CheckResult {
         check,
@@ -268,7 +270,7 @@ fn build_summary(
     check: &Check,
     _org_outcome: &Option<crate::support::outcome::CheckOutcome>,
     failing_repos: usize,
-    _repo_applicable: usize,
+    repo_applicable: usize,
     status: Status,
     active_total: usize,
     org_only_issue: bool,
@@ -279,13 +281,19 @@ fn build_summary(
     if active_total == 0 {
         return String::new();
     }
+    let noun = check.repo_noun();
     if org_only_issue && matches!(status, Status::Warn | Status::Fail) {
         return format!("{active_total}/{active_total} enabled · default policy missing");
     }
+    let denom = if check.applies_to_repo.is_some() {
+        repo_applicable
+    } else {
+        active_total
+    };
     match status {
-        Status::Fail => format!("{failing_repos}/{active_total} repos failing"),
-        Status::Pass => format!("{active_total}/{active_total} repos passing"),
-        Status::Warn => format!("{active_total} repos with warnings"),
+        Status::Fail => format!("{failing_repos}/{denom} {noun} failing"),
+        Status::Pass => format!("{denom}/{denom} {noun} passing"),
+        Status::Warn => format!("{denom} {noun} with warnings"),
         Status::Skipped => String::new(),
     }
 }
@@ -306,7 +314,7 @@ pub fn render_posture_panel(results: &[CheckResult]) {
         (passed * 100) / applicable
     };
 
-    panel::top_section("Security posture");
+    panel::top_section("security posture");
     panel::blank();
 
     let label = format!("{pct}% hardened");
@@ -380,7 +388,7 @@ pub fn render_checks_panel(
     let mut sorted: Vec<&CheckResult> = results.iter().collect();
     sorted.sort_by_key(|r| (order(r.status), breadth(r)));
 
-    panel::top_section("Checks");
+    panel::top_section("checks");
 
     let inner = panel::width() - 2;
     let text_width = inner.saturating_sub(6);
@@ -399,7 +407,7 @@ pub fn render_checks_panel(
             };
         let badge: (&str, fn(&str) -> String) = (badge_glyph, badge_render);
 
-        let title = uppercase_first(r.check.label);
+        let title = r.check.label.to_string();
 
         let head_left_visible = 2 + 1 + 2 + severity.chars().count() + 3 + title.chars().count();
         let head_right_visible = if r.summary.is_empty() {
@@ -459,7 +467,7 @@ pub fn render_checks_panel(
         panel::blank();
 
         if let Some(note) = &r.state_note {
-            let line_text = format!("Currently: {note}.");
+            let line_text = format!("currently: {note}.");
             for line in panel::wrap(&line_text, text_width) {
                 let l = panel::Line::new().space(5).styled(&line, panel::text);
                 panel::row(l);
@@ -468,7 +476,7 @@ pub fn render_checks_panel(
         }
 
         let why = if r.org_only_issue {
-            "a new repository created today would skip this — the default policy is the only thing that applies it to future repos automatically.".to_string()
+            "every new repository inherits the organization's defaults; without this control set at the org level, the next repo someone creates lands unprotected and stays that way until somebody toggles it by hand.".to_string()
         } else {
             r.check.why_enable.replace("→", "›")
         };
@@ -490,9 +498,9 @@ pub fn render_checks_panel(
         let mut wrote_section = false;
         if show_org {
             let header = if show_repo {
-                "Fix the default policy (applies to new repos):"
+                "fix the default policy (applies to new repos):"
             } else {
-                "Fix the default policy:"
+                "fix the default policy:"
             };
             let head = panel::Line::new().space(5).styled(header, panel::text_bold);
             panel::row(head);
@@ -508,7 +516,7 @@ pub fn render_checks_panel(
             }
             let head = panel::Line::new()
                 .space(5)
-                .styled("Fix each affected repository:", panel::text_bold);
+                .styled("fix each affected repository:", panel::text_bold);
             panel::row(head);
             for line in panel::wrap(rp, text_width.saturating_sub(2)) {
                 let l = panel::Line::new().space(7).styled(&line, panel::info);
@@ -518,7 +526,7 @@ pub fn render_checks_panel(
         if show_generic {
             let head = panel::Line::new()
                 .space(5)
-                .styled("How to fix:", panel::text_bold);
+                .styled("how to fix:", panel::text_bold);
             panel::row(head);
             for line in panel::wrap(org_part, text_width.saturating_sub(2)) {
                 let l = panel::Line::new().space(7).styled(&line, panel::info);
@@ -543,16 +551,16 @@ pub fn render_checks_panel(
 
         if let Some(o) = org {
             match r.check.id {
-                "direct_collaborators" => {
+                "repositories_have_no_direct_collaborators" => {
                     render_member_block(
-                        "Outside collaborators",
+                        "outside collaborators",
                         &o.outside_collaborators,
                         text_width,
                         verbose,
                     );
                 }
-                "admin_enforcement" => {
-                    render_member_block("Bypass list", &o.admins, text_width, verbose);
+                "repositories_branch_protection_applies_to_admins" => {
+                    render_member_block("bypass list", &o.admins, text_width, verbose);
                 }
                 _ => {}
             }
@@ -560,7 +568,7 @@ pub fn render_checks_panel(
 
         if is_finding && !r.affected_repos.is_empty() {
             panel::blank();
-            let lbl = format!("Affected repositories ({})", r.affected_repos.len());
+            let lbl = format!("affected repositories ({})", r.affected_repos.len());
             let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
             panel::row(l);
 
@@ -644,10 +652,3 @@ fn split_how_to_fix(path: &str) -> (&str, Option<&str>) {
     }
 }
 
-fn uppercase_first(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-    }
-}

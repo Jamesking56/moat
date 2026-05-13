@@ -1,11 +1,19 @@
+use moat::checks::org_context::ForkPrContributorApprovalState;
 use moat::checks::repo_context::{
     BranchProtectionState, BranchProtections, DependabotConfigState, DirectCollaboratorsState,
-    FeatureState, FeatureStatus, FilePresence, RepoContext, RepoListing, SecurityAndAnalysis,
-    WebhooksState, WorkflowTokenState,
+    FeatureState, FeatureStatus, FilePresence, ReleaseImmutabilityRepoState, RepoContext,
+    RepoListing, SecurityAndAnalysis, WebhooksState, WorkflowTokenState,
 };
 use moat::checks::{
-    dependabot_alerts, dependabot_config, direct_collaborators, pr_reviews,
-    protected_release_branches, push_protection, secret_scanning, signed_commits, workflow_token,
+    repositories_actions_workflow_token_is_read_only as workflow_token,
+    repositories_commits_are_signed as signed_commits,
+    repositories_dependabot_alerts_are_enabled as dependabot_alerts,
+    repositories_have_dependabot_config as dependabot_config,
+    repositories_have_no_direct_collaborators as direct_collaborators,
+    repositories_pull_requests_require_reviews as pr_reviews,
+    repositories_release_branches_are_protected as protected_release_branches,
+    repositories_secret_push_protection_is_enabled as push_protection,
+    repositories_secret_scanning_is_enabled as secret_scanning,
 };
 use moat::support::github::Client;
 use moat::support::outcome::Status;
@@ -41,6 +49,8 @@ fn ctx(branch: BranchProtectionState, token: WorkflowTokenState) -> RepoContext 
         dependabot_config: DependabotConfigState::Missing,
         webhooks: WebhooksState::Ok(Vec::new()),
         direct_collaborators: DirectCollaboratorsState::Ok(Vec::new()),
+        release_immutability: ReleaseImmutabilityRepoState::Enabled,
+        fork_pr_contributor_approval: ForkPrContributorApprovalState::AllExternalContributors,
         config: moat::config::Config::default(),
     }
 }

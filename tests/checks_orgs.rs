@@ -1,8 +1,12 @@
 use moat::checks::org_context::{
-    DefaultRepoPermissionState, FeatureDefaultState, ForkPrContributorApprovalState, MemberList,
-    OrgContext, ReleaseImmutabilityState, TwoFactorState, WorkflowTokenState,
+    DefaultRepoPermissionState, FeatureDefaultState, FeatureState, ForkPrContributorApprovalState,
+    MemberList, OrgContext, OrgRulesets, ReleaseImmutabilityState, RulesetsState, TwoFactorState,
+    WebhooksState, WorkflowTokenState,
 };
-use moat::checks::{members_without_2fa, two_factor_required};
+use moat::checks::{
+    organization_members_all_have_two_factor as members_without_2fa,
+    organization_requires_two_factor as two_factor_required,
+};
 use moat::support::github::Client;
 use moat::support::outcome::Status;
 use wiremock::matchers::{method, path, query_param};
@@ -26,6 +30,9 @@ fn ctx(
         secret_scanning_default: FeatureDefaultState::Enabled,
         push_protection_default: FeatureDefaultState::Enabled,
         dependabot_alerts_default: FeatureDefaultState::Enabled,
+        webhooks: WebhooksState::Ok(Vec::new()),
+        private_vulnerability_reporting: FeatureState::Enabled,
+        rulesets: OrgRulesets::empty(RulesetsState::Loaded),
     }
 }
 

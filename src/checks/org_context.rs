@@ -2,11 +2,12 @@ use crate::checks::common::{self, CollaboratorEntry};
 use crate::support::github::{Client, Fetch};
 use crate::support::outcome::CheckOutcome;
 use anyhow::Result;
+use futures::future::try_join_all;
 use futures::stream::{self, StreamExt};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-pub use crate::checks::common::WorkflowTokenState;
+pub use crate::checks::common::{FeatureState, WebhooksState, WorkflowTokenState};
 
 const COLLABORATOR_CONCURRENCY: usize = 12;
 
@@ -29,6 +30,41 @@ pub struct OrgContext {
     pub secret_scanning_default: FeatureDefaultState,
     pub push_protection_default: FeatureDefaultState,
     pub dependabot_alerts_default: FeatureDefaultState,
+    pub webhooks: WebhooksState,
+    pub private_vulnerability_reporting: FeatureState,
+    pub rulesets: OrgRulesets,
+}
+
+pub struct OrgRulesets {
+    pub state: RulesetsState,
+    pub any_active: bool,
+    pub required_signatures: bool,
+    pub pull_request: bool,
+    pub required_linear_history: bool,
+    pub non_fast_forward: bool,
+    pub deletion: bool,
+    pub has_bypass_actors: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RulesetsState {
+    Loaded,
+    NoPermission,
+}
+
+impl OrgRulesets {
+    pub fn empty(state: RulesetsState) -> Self {
+        Self {
+            state,
+            any_active: false,
+            required_signatures: false,
+            pull_request: false,
+            required_linear_history: false,
+            non_fast_forward: false,
+            deletion: false,
+            has_bypass_actors: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -42,10 +78,10 @@ pub enum FeatureDefaultState {
 impl FeatureDefaultState {
     pub fn to_outcome(&self, unknown_label: &str) -> CheckOutcome {
         match self {
-            Self::Enabled => CheckOutcome::pass("applied by default to new repositories"),
-            Self::Disabled => CheckOutcome::fail("disabled"),
+            Self::Enabled => CheckOutcome::pass("enabled by default for new repositories"),
+            Self::Disabled => CheckOutcome::fail("disabled by default for new repositories"),
             Self::NotSet => {
-                CheckOutcome::warn("no default security configuration for new repositories")
+                CheckOutcome::warn("no default security configuration set for new repositories")
             }
             Self::Unknown => CheckOutcome::skipped(unknown_label),
         }
@@ -152,6 +188,7 @@ impl OrgContext {
         let sec_defaults_path = format!("/orgs/{org}/code-security/configurations/defaults");
         let members_2fa_path = format!("/orgs/{org}/members?filter=2fa_disabled");
         let admins_path = format!("/orgs/{org}/members?role=admin");
+        let hooks_path = format!("/orgs/{org}/hooks");
 
         let (
             org_resp,
@@ -162,6 +199,9 @@ impl OrgContext {
             members_without_2fa,
             outside_collaborators,
             admins,
+            webhooks,
+            private_vulnerability_reporting,
+            rulesets,
         ) = tokio::try_join!(
             traced(
                 "organization settings",
@@ -192,6 +232,12 @@ impl OrgContext {
                 fetch_outside_collaborators(client, org),
             ),
             traced("organization admins", fetch_logins(client, &admins_path)),
+            traced("organization webhooks", common::fetch_webhooks(client, &hooks_path)),
+            traced(
+                "private vulnerability reporting default",
+                fetch_org_private_vulnerability_reporting(client, org),
+            ),
+            traced("organization rulesets", fetch_org_rulesets(client, org)),
         )?;
 
         let (two_factor_required, default_repository_permission) = match org_resp {
@@ -293,8 +339,111 @@ impl OrgContext {
             secret_scanning_default,
             push_protection_default,
             dependabot_alerts_default,
+            webhooks,
+            private_vulnerability_reporting,
+            rulesets,
         })
     }
+}
+
+#[derive(Deserialize)]
+struct OrgPvrResponse {
+    enabled_for_new_repositories: Option<bool>,
+}
+
+async fn fetch_org_private_vulnerability_reporting(
+    client: &Client,
+    org: &str,
+) -> Result<FeatureState> {
+    Ok(
+        match client
+            .get_json::<OrgPvrResponse>(&format!("/orgs/{org}/private-vulnerability-reporting"))
+            .await?
+        {
+            Fetch::Ok(r) => match r.enabled_for_new_repositories {
+                Some(true) => FeatureState::Enabled,
+                Some(false) => FeatureState::Disabled,
+                None => FeatureState::Unknown,
+            },
+            Fetch::NotFound => FeatureState::Disabled,
+            Fetch::Forbidden => FeatureState::Unknown,
+        },
+    )
+}
+
+#[derive(Deserialize)]
+struct RulesetSummary {
+    id: u64,
+    #[serde(default)]
+    enforcement: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RulesetDetail {
+    #[serde(default)]
+    rules: Vec<RulesetRule>,
+    #[serde(default)]
+    bypass_actors: Vec<serde::de::IgnoredAny>,
+}
+
+#[derive(Deserialize)]
+struct RulesetRule {
+    #[serde(rename = "type")]
+    rule_type: String,
+}
+
+async fn fetch_org_rulesets(client: &Client, org: &str) -> Result<OrgRulesets> {
+    let summaries: Vec<RulesetSummary> = match client
+        .get_paginated::<RulesetSummary>(&format!("/orgs/{org}/rulesets"))
+        .await?
+    {
+        Fetch::Ok(v) => v,
+        Fetch::Forbidden => return Ok(OrgRulesets::empty(RulesetsState::NoPermission)),
+        Fetch::NotFound => return Ok(OrgRulesets::empty(RulesetsState::Loaded)),
+    };
+
+    let active: Vec<u64> = summaries
+        .into_iter()
+        .filter(|s| s.enforcement.as_deref() == Some("active"))
+        .map(|s| s.id)
+        .collect();
+
+    if active.is_empty() {
+        return Ok(OrgRulesets::empty(RulesetsState::Loaded));
+    }
+
+    let details: Vec<RulesetDetail> = try_join_all(active.into_iter().map(|id| async move {
+        match client
+            .get_json::<RulesetDetail>(&format!("/orgs/{org}/rulesets/{id}"))
+            .await?
+        {
+            Fetch::Ok(d) => Ok::<_, anyhow::Error>(Some(d)),
+            Fetch::NotFound | Fetch::Forbidden => Ok(None),
+        }
+    }))
+    .await?
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let mut out = OrgRulesets::empty(RulesetsState::Loaded);
+    for detail in details {
+        out.any_active = true;
+        if !detail.bypass_actors.is_empty() {
+            out.has_bypass_actors = true;
+        }
+        for rule in detail.rules {
+            match rule.rule_type.as_str() {
+                "required_signatures" => out.required_signatures = true,
+                "pull_request" => out.pull_request = true,
+                "required_linear_history" => out.required_linear_history = true,
+                "non_fast_forward" => out.non_fast_forward = true,
+                "deletion" => out.deletion = true,
+                _ => {}
+            }
+        }
+    }
+    Ok(out)
 }
 
 fn feature_default(value: Option<&str>) -> FeatureDefaultState {

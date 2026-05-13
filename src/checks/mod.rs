@@ -2,29 +2,29 @@ pub mod common;
 pub mod org_context;
 pub mod repo_context;
 
-pub mod admin_enforcement;
-pub mod default_repo_permission;
-pub mod dependabot_alerts;
-pub mod dependabot_config;
-pub mod direct_collaborators;
-pub mod fork_pr_contributor_approval;
-pub mod immutable_branch;
-pub mod linear_history;
-pub mod members_without_2fa;
-pub mod pinned_actions;
-pub mod pr_reviews;
-pub mod private_vulnerability_reporting;
-pub mod protected_release_branches;
-pub mod pull_request_target;
-pub mod push_protection;
-pub mod release_immutability;
-pub mod secret_scanning;
-pub mod security_md;
-pub mod signed_commits;
-pub mod two_factor_required;
-pub mod webhooks;
-pub mod workflow_permissions;
-pub mod workflow_token;
+pub mod organization_members_all_have_two_factor;
+pub mod organization_new_members_default_to_no_permissions;
+pub mod organization_requires_two_factor;
+pub mod repositories_actions_workflow_token_is_read_only;
+pub mod repositories_branch_protection_applies_to_admins;
+pub mod repositories_commits_are_signed;
+pub mod repositories_default_branch_has_linear_history;
+pub mod repositories_default_branch_is_locked;
+pub mod repositories_dependabot_alerts_are_enabled;
+pub mod repositories_fork_pull_requests_require_approval;
+pub mod repositories_have_dependabot_config;
+pub mod repositories_have_no_direct_collaborators;
+pub mod repositories_have_security_policy;
+pub mod repositories_private_vulnerability_reporting_is_enabled;
+pub mod repositories_pull_request_target_is_safe;
+pub mod repositories_pull_requests_require_reviews;
+pub mod repositories_release_branches_are_protected;
+pub mod repositories_releases_are_immutable;
+pub mod repositories_secret_push_protection_is_enabled;
+pub mod repositories_secret_scanning_is_enabled;
+pub mod repositories_webhooks_are_secure;
+pub mod repositories_workflow_actions_are_pinned;
+pub mod repositories_workflow_permissions_are_restricted;
 
 pub use org_context::OrgContext;
 pub use repo_context::RepoContext;
@@ -38,6 +38,11 @@ pub enum Scope {
     OrgAndRepo,
 }
 
+pub struct StateCtx<'a> {
+    pub org: Option<&'a OrgContext>,
+    pub repos: &'a [&'a RepoContext],
+}
+
 pub struct Check {
     pub id: &'static str,
     pub label: &'static str,
@@ -45,6 +50,11 @@ pub struct Check {
     pub why_enable: &'static str,
     pub org_eval: Option<fn(&OrgContext) -> CheckOutcome>,
     pub repo_eval: Option<fn(&RepoContext) -> CheckOutcome>,
+    pub state_note: fn(StateCtx<'_>) -> Option<String>,
+    /// When set, the check is only evaluated on repos where this predicate
+    /// returns `true`. Private repos are filtered out for checks that only
+    /// make sense in a public-disclosure context.
+    pub applies_to_repo: Option<fn(&RepoContext) -> bool>,
 }
 
 impl Check {
@@ -56,194 +66,253 @@ impl Check {
             (false, false) => panic!("check `{}` has no evaluators", self.id),
         }
     }
+
+    /// The label to use for the applicable-repo subset in summaries.
+    pub fn repo_noun(&self) -> &'static str {
+        if self.applies_to_repo.is_some() {
+            "public repos"
+        } else {
+            "repos"
+        }
+    }
+}
+
+fn public_only(r: &RepoContext) -> bool {
+    !r.private
 }
 
 pub static CHECKS: &[Check] = &[
     // ----- Org-only -----
     Check {
-        id: "two_factor_required",
-        label: two_factor_required::LABEL,
-        how_to_fix: two_factor_required::HOW_TO_FIX,
-        why_enable: two_factor_required::WHY_ENABLE,
-        org_eval: Some(two_factor_required::org_check),
+        id: "organization_requires_two_factor",
+        label: organization_requires_two_factor::LABEL,
+        how_to_fix: organization_requires_two_factor::HOW_TO_FIX,
+        why_enable: organization_requires_two_factor::WHY_ENABLE,
+        org_eval: Some(organization_requires_two_factor::org_check),
         repo_eval: None,
+        state_note: organization_requires_two_factor::state_note,
+        applies_to_repo: None,
     },
     Check {
-        id: "members_without_2fa",
-        label: members_without_2fa::LABEL,
-        how_to_fix: members_without_2fa::HOW_TO_FIX,
-        why_enable: members_without_2fa::WHY_ENABLE,
-        org_eval: Some(members_without_2fa::org_check),
+        id: "organization_members_all_have_two_factor",
+        label: organization_members_all_have_two_factor::LABEL,
+        how_to_fix: organization_members_all_have_two_factor::HOW_TO_FIX,
+        why_enable: organization_members_all_have_two_factor::WHY_ENABLE,
+        org_eval: Some(organization_members_all_have_two_factor::org_check),
         repo_eval: None,
+        state_note: organization_members_all_have_two_factor::state_note,
+        applies_to_repo: None,
     },
     Check {
-        id: "default_repo_permission",
-        label: default_repo_permission::LABEL,
-        how_to_fix: default_repo_permission::HOW_TO_FIX,
-        why_enable: default_repo_permission::WHY_ENABLE,
-        org_eval: Some(default_repo_permission::org_check),
+        id: "organization_new_members_default_to_no_permissions",
+        label: organization_new_members_default_to_no_permissions::LABEL,
+        how_to_fix: organization_new_members_default_to_no_permissions::HOW_TO_FIX,
+        why_enable: organization_new_members_default_to_no_permissions::WHY_ENABLE,
+        org_eval: Some(organization_new_members_default_to_no_permissions::org_check),
         repo_eval: None,
-    },
-    Check {
-        id: "release_immutability",
-        label: release_immutability::LABEL,
-        how_to_fix: release_immutability::HOW_TO_FIX,
-        why_enable: release_immutability::WHY_ENABLE,
-        org_eval: Some(release_immutability::org_check),
-        repo_eval: None,
-    },
-    Check {
-        id: "fork_pr_contributor_approval",
-        label: fork_pr_contributor_approval::LABEL,
-        how_to_fix: fork_pr_contributor_approval::HOW_TO_FIX,
-        why_enable: fork_pr_contributor_approval::WHY_ENABLE,
-        org_eval: Some(fork_pr_contributor_approval::org_check),
-        repo_eval: None,
+        state_note: organization_new_members_default_to_no_permissions::state_note,
+        applies_to_repo: None,
     },
     // ----- Org + Repo (merged) -----
     Check {
-        id: "workflow_token",
-        label: workflow_token::LABEL,
-        how_to_fix: workflow_token::HOW_TO_FIX,
-        why_enable: workflow_token::WHY_ENABLE,
-        org_eval: Some(workflow_token::org_check),
-        repo_eval: Some(workflow_token::repo_check),
+        id: "repositories_actions_workflow_token_is_read_only",
+        label: repositories_actions_workflow_token_is_read_only::LABEL,
+        how_to_fix: repositories_actions_workflow_token_is_read_only::HOW_TO_FIX,
+        why_enable: repositories_actions_workflow_token_is_read_only::WHY_ENABLE,
+        org_eval: Some(repositories_actions_workflow_token_is_read_only::org_check),
+        repo_eval: Some(repositories_actions_workflow_token_is_read_only::repo_check),
+        state_note: repositories_actions_workflow_token_is_read_only::state_note,
+        applies_to_repo: None,
     },
     Check {
-        id: "secret_scanning",
-        label: secret_scanning::LABEL,
-        how_to_fix: secret_scanning::HOW_TO_FIX,
-        why_enable: secret_scanning::WHY_ENABLE,
-        org_eval: Some(secret_scanning::org_check),
-        repo_eval: Some(secret_scanning::repo_check),
+        id: "repositories_secret_scanning_is_enabled",
+        label: repositories_secret_scanning_is_enabled::LABEL,
+        how_to_fix: repositories_secret_scanning_is_enabled::HOW_TO_FIX,
+        why_enable: repositories_secret_scanning_is_enabled::WHY_ENABLE,
+        org_eval: Some(repositories_secret_scanning_is_enabled::org_check),
+        repo_eval: Some(repositories_secret_scanning_is_enabled::repo_check),
+        state_note: repositories_secret_scanning_is_enabled::state_note,
+        applies_to_repo: None,
     },
     Check {
-        id: "push_protection",
-        label: push_protection::LABEL,
-        how_to_fix: push_protection::HOW_TO_FIX,
-        why_enable: push_protection::WHY_ENABLE,
-        org_eval: Some(push_protection::org_check),
-        repo_eval: Some(push_protection::repo_check),
+        id: "repositories_secret_push_protection_is_enabled",
+        label: repositories_secret_push_protection_is_enabled::LABEL,
+        how_to_fix: repositories_secret_push_protection_is_enabled::HOW_TO_FIX,
+        why_enable: repositories_secret_push_protection_is_enabled::WHY_ENABLE,
+        org_eval: Some(repositories_secret_push_protection_is_enabled::org_check),
+        repo_eval: Some(repositories_secret_push_protection_is_enabled::repo_check),
+        state_note: repositories_secret_push_protection_is_enabled::state_note,
+        applies_to_repo: None,
     },
     Check {
-        id: "dependabot_alerts",
-        label: dependabot_alerts::LABEL,
-        how_to_fix: dependabot_alerts::HOW_TO_FIX,
-        why_enable: dependabot_alerts::WHY_ENABLE,
-        org_eval: Some(dependabot_alerts::org_check),
-        repo_eval: Some(dependabot_alerts::repo_check),
+        id: "repositories_dependabot_alerts_are_enabled",
+        label: repositories_dependabot_alerts_are_enabled::LABEL,
+        how_to_fix: repositories_dependabot_alerts_are_enabled::HOW_TO_FIX,
+        why_enable: repositories_dependabot_alerts_are_enabled::WHY_ENABLE,
+        org_eval: Some(repositories_dependabot_alerts_are_enabled::org_check),
+        repo_eval: Some(repositories_dependabot_alerts_are_enabled::repo_check),
+        state_note: repositories_dependabot_alerts_are_enabled::state_note,
+        applies_to_repo: None,
+    },
+    Check {
+        id: "repositories_releases_are_immutable",
+        label: repositories_releases_are_immutable::LABEL,
+        how_to_fix: repositories_releases_are_immutable::HOW_TO_FIX,
+        why_enable: repositories_releases_are_immutable::WHY_ENABLE,
+        org_eval: Some(repositories_releases_are_immutable::org_check),
+        repo_eval: Some(repositories_releases_are_immutable::repo_check),
+        state_note: repositories_releases_are_immutable::state_note,
+        applies_to_repo: None,
+    },
+    Check {
+        id: "repositories_fork_pull_requests_require_approval",
+        label: repositories_fork_pull_requests_require_approval::LABEL,
+        how_to_fix: repositories_fork_pull_requests_require_approval::HOW_TO_FIX,
+        why_enable: repositories_fork_pull_requests_require_approval::WHY_ENABLE,
+        org_eval: Some(repositories_fork_pull_requests_require_approval::org_check),
+        repo_eval: Some(repositories_fork_pull_requests_require_approval::repo_check),
+        state_note: repositories_fork_pull_requests_require_approval::state_note,
+        applies_to_repo: Some(public_only),
+    },
+    Check {
+        id: "repositories_release_branches_are_protected",
+        label: repositories_release_branches_are_protected::LABEL,
+        how_to_fix: repositories_release_branches_are_protected::HOW_TO_FIX,
+        why_enable: repositories_release_branches_are_protected::WHY_ENABLE,
+        org_eval: Some(repositories_release_branches_are_protected::org_check),
+        repo_eval: Some(repositories_release_branches_are_protected::repo_check),
+        state_note: repositories_release_branches_are_protected::state_note,
+        applies_to_repo: None,
+    },
+    Check {
+        id: "repositories_commits_are_signed",
+        label: repositories_commits_are_signed::LABEL,
+        how_to_fix: repositories_commits_are_signed::HOW_TO_FIX,
+        why_enable: repositories_commits_are_signed::WHY_ENABLE,
+        org_eval: Some(repositories_commits_are_signed::org_check),
+        repo_eval: Some(repositories_commits_are_signed::repo_check),
+        state_note: repositories_commits_are_signed::state_note,
+        applies_to_repo: None,
+    },
+    Check {
+        id: "repositories_pull_requests_require_reviews",
+        label: repositories_pull_requests_require_reviews::LABEL,
+        how_to_fix: repositories_pull_requests_require_reviews::HOW_TO_FIX,
+        why_enable: repositories_pull_requests_require_reviews::WHY_ENABLE,
+        org_eval: Some(repositories_pull_requests_require_reviews::org_check),
+        repo_eval: Some(repositories_pull_requests_require_reviews::repo_check),
+        state_note: repositories_pull_requests_require_reviews::state_note,
+        applies_to_repo: None,
+    },
+    Check {
+        id: "repositories_branch_protection_applies_to_admins",
+        label: repositories_branch_protection_applies_to_admins::LABEL,
+        how_to_fix: repositories_branch_protection_applies_to_admins::HOW_TO_FIX,
+        why_enable: repositories_branch_protection_applies_to_admins::WHY_ENABLE,
+        org_eval: Some(repositories_branch_protection_applies_to_admins::org_check),
+        repo_eval: Some(repositories_branch_protection_applies_to_admins::repo_check),
+        state_note: repositories_branch_protection_applies_to_admins::state_note,
+        applies_to_repo: None,
+    },
+    Check {
+        id: "repositories_default_branch_is_locked",
+        label: repositories_default_branch_is_locked::LABEL,
+        how_to_fix: repositories_default_branch_is_locked::HOW_TO_FIX,
+        why_enable: repositories_default_branch_is_locked::WHY_ENABLE,
+        org_eval: Some(repositories_default_branch_is_locked::org_check),
+        repo_eval: Some(repositories_default_branch_is_locked::repo_check),
+        state_note: repositories_default_branch_is_locked::state_note,
+        applies_to_repo: None,
+    },
+    Check {
+        id: "repositories_default_branch_has_linear_history",
+        label: repositories_default_branch_has_linear_history::LABEL,
+        how_to_fix: repositories_default_branch_has_linear_history::HOW_TO_FIX,
+        why_enable: repositories_default_branch_has_linear_history::WHY_ENABLE,
+        org_eval: Some(repositories_default_branch_has_linear_history::org_check),
+        repo_eval: Some(repositories_default_branch_has_linear_history::repo_check),
+        state_note: repositories_default_branch_has_linear_history::state_note,
+        applies_to_repo: None,
+    },
+    Check {
+        id: "repositories_webhooks_are_secure",
+        label: repositories_webhooks_are_secure::LABEL,
+        how_to_fix: repositories_webhooks_are_secure::HOW_TO_FIX,
+        why_enable: repositories_webhooks_are_secure::WHY_ENABLE,
+        org_eval: Some(repositories_webhooks_are_secure::org_check),
+        repo_eval: Some(repositories_webhooks_are_secure::repo_check),
+        state_note: repositories_webhooks_are_secure::state_note,
+        applies_to_repo: None,
+    },
+    Check {
+        id: "repositories_have_no_direct_collaborators",
+        label: repositories_have_no_direct_collaborators::LABEL,
+        how_to_fix: repositories_have_no_direct_collaborators::HOW_TO_FIX,
+        why_enable: repositories_have_no_direct_collaborators::WHY_ENABLE,
+        org_eval: Some(repositories_have_no_direct_collaborators::org_check),
+        repo_eval: Some(repositories_have_no_direct_collaborators::repo_check),
+        state_note: repositories_have_no_direct_collaborators::state_note,
+        applies_to_repo: None,
+    },
+    Check {
+        id: "repositories_private_vulnerability_reporting_is_enabled",
+        label: repositories_private_vulnerability_reporting_is_enabled::LABEL,
+        how_to_fix: repositories_private_vulnerability_reporting_is_enabled::HOW_TO_FIX,
+        why_enable: repositories_private_vulnerability_reporting_is_enabled::WHY_ENABLE,
+        org_eval: Some(repositories_private_vulnerability_reporting_is_enabled::org_check),
+        repo_eval: Some(repositories_private_vulnerability_reporting_is_enabled::repo_check),
+        state_note: repositories_private_vulnerability_reporting_is_enabled::state_note,
+        applies_to_repo: Some(public_only),
     },
     // ----- Repo-only -----
     Check {
-        id: "protected_release_branches",
-        label: protected_release_branches::LABEL,
-        how_to_fix: protected_release_branches::HOW_TO_FIX,
-        why_enable: protected_release_branches::WHY_ENABLE,
+        id: "repositories_have_security_policy",
+        label: repositories_have_security_policy::LABEL,
+        how_to_fix: repositories_have_security_policy::HOW_TO_FIX,
+        why_enable: repositories_have_security_policy::WHY_ENABLE,
         org_eval: None,
-        repo_eval: Some(protected_release_branches::repo_check),
+        repo_eval: Some(repositories_have_security_policy::repo_check),
+        state_note: repositories_have_security_policy::state_note,
+        applies_to_repo: Some(public_only),
     },
     Check {
-        id: "signed_commits",
-        label: signed_commits::LABEL,
-        how_to_fix: signed_commits::HOW_TO_FIX,
-        why_enable: signed_commits::WHY_ENABLE,
+        id: "repositories_workflow_actions_are_pinned",
+        label: repositories_workflow_actions_are_pinned::LABEL,
+        how_to_fix: repositories_workflow_actions_are_pinned::HOW_TO_FIX,
+        why_enable: repositories_workflow_actions_are_pinned::WHY_ENABLE,
         org_eval: None,
-        repo_eval: Some(signed_commits::repo_check),
+        repo_eval: Some(repositories_workflow_actions_are_pinned::repo_check),
+        state_note: repositories_workflow_actions_are_pinned::state_note,
+        applies_to_repo: None,
     },
     Check {
-        id: "pr_reviews",
-        label: pr_reviews::LABEL,
-        how_to_fix: pr_reviews::HOW_TO_FIX,
-        why_enable: pr_reviews::WHY_ENABLE,
+        id: "repositories_pull_request_target_is_safe",
+        label: repositories_pull_request_target_is_safe::LABEL,
+        how_to_fix: repositories_pull_request_target_is_safe::HOW_TO_FIX,
+        why_enable: repositories_pull_request_target_is_safe::WHY_ENABLE,
         org_eval: None,
-        repo_eval: Some(pr_reviews::repo_check),
+        repo_eval: Some(repositories_pull_request_target_is_safe::repo_check),
+        state_note: repositories_pull_request_target_is_safe::state_note,
+        applies_to_repo: Some(public_only),
     },
     Check {
-        id: "admin_enforcement",
-        label: admin_enforcement::LABEL,
-        how_to_fix: admin_enforcement::HOW_TO_FIX,
-        why_enable: admin_enforcement::WHY_ENABLE,
+        id: "repositories_workflow_permissions_are_restricted",
+        label: repositories_workflow_permissions_are_restricted::LABEL,
+        how_to_fix: repositories_workflow_permissions_are_restricted::HOW_TO_FIX,
+        why_enable: repositories_workflow_permissions_are_restricted::WHY_ENABLE,
         org_eval: None,
-        repo_eval: Some(admin_enforcement::repo_check),
+        repo_eval: Some(repositories_workflow_permissions_are_restricted::repo_check),
+        state_note: repositories_workflow_permissions_are_restricted::state_note,
+        applies_to_repo: None,
     },
     Check {
-        id: "immutable_branch",
-        label: immutable_branch::LABEL,
-        how_to_fix: immutable_branch::HOW_TO_FIX,
-        why_enable: immutable_branch::WHY_ENABLE,
+        id: "repositories_have_dependabot_config",
+        label: repositories_have_dependabot_config::LABEL,
+        how_to_fix: repositories_have_dependabot_config::HOW_TO_FIX,
+        why_enable: repositories_have_dependabot_config::WHY_ENABLE,
         org_eval: None,
-        repo_eval: Some(immutable_branch::repo_check),
-    },
-    Check {
-        id: "linear_history",
-        label: linear_history::LABEL,
-        how_to_fix: linear_history::HOW_TO_FIX,
-        why_enable: linear_history::WHY_ENABLE,
-        org_eval: None,
-        repo_eval: Some(linear_history::repo_check),
-    },
-    Check {
-        id: "pinned_actions",
-        label: pinned_actions::LABEL,
-        how_to_fix: pinned_actions::HOW_TO_FIX,
-        why_enable: pinned_actions::WHY_ENABLE,
-        org_eval: None,
-        repo_eval: Some(pinned_actions::repo_check),
-    },
-    Check {
-        id: "pull_request_target",
-        label: pull_request_target::LABEL,
-        how_to_fix: pull_request_target::HOW_TO_FIX,
-        why_enable: pull_request_target::WHY_ENABLE,
-        org_eval: None,
-        repo_eval: Some(pull_request_target::repo_check),
-    },
-    Check {
-        id: "workflow_permissions",
-        label: workflow_permissions::LABEL,
-        how_to_fix: workflow_permissions::HOW_TO_FIX,
-        why_enable: workflow_permissions::WHY_ENABLE,
-        org_eval: None,
-        repo_eval: Some(workflow_permissions::repo_check),
-    },
-    Check {
-        id: "webhooks",
-        label: webhooks::LABEL,
-        how_to_fix: webhooks::HOW_TO_FIX,
-        why_enable: webhooks::WHY_ENABLE,
-        org_eval: None,
-        repo_eval: Some(webhooks::repo_check),
-    },
-    Check {
-        id: "direct_collaborators",
-        label: direct_collaborators::LABEL,
-        how_to_fix: direct_collaborators::HOW_TO_FIX,
-        why_enable: direct_collaborators::WHY_ENABLE,
-        org_eval: None,
-        repo_eval: Some(direct_collaborators::repo_check),
-    },
-    Check {
-        id: "security_md",
-        label: security_md::LABEL,
-        how_to_fix: security_md::HOW_TO_FIX,
-        why_enable: security_md::WHY_ENABLE,
-        org_eval: None,
-        repo_eval: Some(security_md::repo_check),
-    },
-    Check {
-        id: "private_vulnerability_reporting",
-        label: private_vulnerability_reporting::LABEL,
-        how_to_fix: private_vulnerability_reporting::HOW_TO_FIX,
-        why_enable: private_vulnerability_reporting::WHY_ENABLE,
-        org_eval: None,
-        repo_eval: Some(private_vulnerability_reporting::repo_check),
-    },
-    Check {
-        id: "dependabot_config",
-        label: dependabot_config::LABEL,
-        how_to_fix: dependabot_config::HOW_TO_FIX,
-        why_enable: dependabot_config::WHY_ENABLE,
-        org_eval: None,
-        repo_eval: Some(dependabot_config::repo_check),
+        repo_eval: Some(repositories_have_dependabot_config::repo_check),
+        state_note: repositories_have_dependabot_config::state_note,
+        applies_to_repo: None,
     },
 ];

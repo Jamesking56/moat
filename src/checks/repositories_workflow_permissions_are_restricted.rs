@@ -1,3 +1,5 @@
+use crate::checks::StateCtx;
+use crate::checks::common::{noun, repos_word};
 use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
 use crate::support::workflows::{self, PermissionsBlock, WorkflowsState};
@@ -32,4 +34,46 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     } else {
         CheckOutcome::fail("✗").with_items(findings)
     }
+}
+
+pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
+    let mut total_bad = 0usize;
+    let mut bad_repos = 0usize;
+    let mut applicable = 0usize;
+    for r in ctx.repos {
+        if let WorkflowsState::Loaded(wfs) = &r.workflows {
+            if wfs.is_empty() {
+                continue;
+            }
+            applicable += 1;
+            let mut repo_bad = 0usize;
+            for wf in wfs {
+                match workflows::top_level_permissions(&wf.doc) {
+                    PermissionsBlock::Missing | PermissionsBlock::WriteAll => repo_bad += 1,
+                    PermissionsBlock::Scoped(w) if !w.is_empty() => repo_bad += 1,
+                    _ => {}
+                }
+            }
+            if repo_bad > 0 {
+                bad_repos += 1;
+                total_bad += repo_bad;
+            }
+        }
+    }
+
+    if applicable == 0 {
+        return None;
+    }
+    Some(if total_bad == 0 {
+        format!(
+            "every workflow declares a read-only permissions block across all {applicable} {} with workflows",
+            repos_word(applicable)
+        )
+    } else {
+        format!(
+            "{total_bad} {} grant write or omit the permissions block across {bad_repos}/{applicable} {}",
+            noun(total_bad, "workflow", "workflows"),
+            repos_word(applicable)
+        )
+    })
 }
