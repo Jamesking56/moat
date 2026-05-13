@@ -42,9 +42,9 @@ pub enum FeatureDefaultState {
 impl FeatureDefaultState {
     pub fn to_outcome(&self, unknown_label: &str) -> CheckOutcome {
         match self {
-            Self::Enabled => CheckOutcome::pass("enabled by default"),
+            Self::Enabled => CheckOutcome::pass("applied by default to new repositories"),
             Self::Disabled => CheckOutcome::fail("disabled"),
-            Self::NotSet => CheckOutcome::warn("not set as default"),
+            Self::NotSet => CheckOutcome::warn("no default security configuration for new repositories"),
             Self::Unknown => CheckOutcome::skipped(unknown_label),
         }
     }

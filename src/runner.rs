@@ -160,6 +160,7 @@ pub struct CheckResult {
     pub state_note: Option<String>,
     pub affected_repos: Vec<String>,
     pub org_default_issue: bool,
+    pub org_only_issue: bool,
 }
 
 pub fn run_checks(ctx: &CheckContext<'_>, only: Option<Only>) -> Vec<CheckResult> {
@@ -244,6 +245,10 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         Status::Pass
     };
 
+    let org_only_issue = (org_failed || org_warned)
+        && !any_repo_fail
+        && !any_repo_warn;
+
     let summary = build_summary(
         check,
         &org_outcome,
@@ -251,6 +256,7 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         repo_applicable,
         status,
         active_total,
+        org_only_issue,
     );
 
     let org_note = org_outcome.as_ref().and_then(|o| {
@@ -270,6 +276,7 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         state_note,
         affected_repos: affected,
         org_default_issue: org_failed || org_warned,
+        org_only_issue,
     }
 }
 
@@ -280,12 +287,16 @@ fn build_summary(
     _repo_applicable: usize,
     status: Status,
     active_total: usize,
+    org_only_issue: bool,
 ) -> String {
     if matches!(check.scope(), Scope::Org) {
         return "org-wide".to_string();
     }
     if active_total == 0 {
         return String::new();
+    }
+    if org_only_issue && matches!(status, Status::Warn | Status::Fail) {
+        return format!("{active_total}/{active_total} enabled · default policy missing");
     }
     match status {
         Status::Fail => format!("{failing_repos}/{active_total} repos failing"),
@@ -472,7 +483,11 @@ pub fn render_checks_panel(
             panel::blank();
         }
 
-        let why = r.check.why_enable.replace("→", "›");
+        let why = if r.org_only_issue {
+            "a new repository created today would skip this — the default policy is the only thing that applies it to future repos automatically.".to_string()
+        } else {
+            r.check.why_enable.replace("→", "›")
+        };
         for line in panel::wrap(&why, text_width) {
             let l = panel::Line::new().space(5).styled(&line, panel::muted);
             panel::row(l);
@@ -480,17 +495,63 @@ pub fn render_checks_panel(
 
         panel::blank();
 
-        let path = r.check.how_to_fix.replace("→", "›");
-        for line in panel::wrap(&path, text_width) {
-            let l = panel::Line::new().space(5).styled(&line, panel::info);
-            panel::row(l);
+        let raw_path = r.check.how_to_fix.replace("→", "›");
+        let (org_part, repo_part) = split_how_to_fix(&raw_path);
+        let has_repo_failures = !r.affected_repos.is_empty();
+        let show_org = r.org_default_issue;
+        let show_repo = has_repo_failures && repo_part.is_some();
+        let show_generic = !show_org && !show_repo && matches!(r.status, Status::Fail | Status::Warn);
+
+        let mut wrote_section = false;
+        if show_org {
+            let header = if show_repo {
+                "Fix the default policy (applies to new repos):"
+            } else {
+                "Fix the default policy:"
+            };
+            let head = panel::Line::new().space(5).styled(header, panel::text_bold);
+            panel::row(head);
+            for line in panel::wrap(org_part, text_width.saturating_sub(2)) {
+                let l = panel::Line::new().space(7).styled(&line, panel::info);
+                panel::row(l);
+            }
+            wrote_section = true;
+        }
+        if show_repo {
+            if let Some(rp) = repo_part {
+                if wrote_section {
+                    panel::blank();
+                }
+                let head = panel::Line::new()
+                    .space(5)
+                    .styled("Fix each affected repository:", panel::text_bold);
+                panel::row(head);
+                for line in panel::wrap(rp, text_width.saturating_sub(2)) {
+                    let l = panel::Line::new().space(7).styled(&line, panel::info);
+                    panel::row(l);
+                }
+            }
+        }
+        if show_generic {
+            let head = panel::Line::new()
+                .space(5)
+                .styled("How to fix:", panel::text_bold);
+            panel::row(head);
+            for line in panel::wrap(org_part, text_width.saturating_sub(2)) {
+                let l = panel::Line::new().space(7).styled(&line, panel::info);
+                panel::row(l);
+            }
         }
 
         let is_finding = matches!(r.status, Status::Fail | Status::Warn);
 
         if is_finding && r.org_default_issue {
             panel::blank();
-            let note = "org-wide default also flagged — fixing org default propagates to new repos";
+            let note = if r.org_only_issue {
+                "every existing repo has this enabled, but no security configuration is set as the default for newly created repositories — new repos will be created without it"
+            } else {
+                "org-wide default also flagged — fixing the default configuration's policy propagates to new repos"
+            };
             for line in panel::wrap(note, text_width) {
                 let l = panel::Line::new().space(5).styled(&line, panel::accent);
                 panel::row(l);
@@ -582,6 +643,21 @@ fn render_member_block(title: &str, list: &MemberList, text_width: usize, verbos
                 panel::row(l);
             }
         }
+    }
+}
+
+fn split_how_to_fix(path: &str) -> (&str, Option<&str>) {
+    let marker = "(per-repo:";
+    if let Some(open) = path.find(marker) {
+        let org = path[..open].trim_end().trim_end_matches('.').trim_end();
+        let after = &path[open + marker.len()..];
+        let inner = match after.rfind(')') {
+            Some(close) => after[..close].trim(),
+            None => after.trim(),
+        };
+        (org, Some(inner))
+    } else {
+        (path.trim_end_matches('.').trim_end(), None)
     }
 }
 
