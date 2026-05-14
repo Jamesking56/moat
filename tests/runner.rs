@@ -113,7 +113,7 @@ async fn run_org_checks_completes_against_fake_client() {
     };
     let results = runner::run_checks(&ctx);
     runner::render_posture_panel(&results);
-    runner::render_checks_panel(&results, Some(&org), 0, false);
+    runner::render_checks_panel(&results, Some(&org), "test-owner", 0, false);
 }
 
 #[tokio::test]
@@ -128,7 +128,7 @@ async fn run_repo_checks_completes_against_fake_client() {
     };
     let results = runner::run_checks(&ctx);
     runner::render_posture_panel(&results);
-    runner::render_checks_panel(&results, None, contexts.len(), false);
+    runner::render_checks_panel(&results, None, "test-owner", contexts.len(), false);
 }
 
 #[tokio::test]

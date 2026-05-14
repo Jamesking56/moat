@@ -43,7 +43,7 @@ async fn run() -> Result<i32> {
         };
         let results = runner::run_checks(&ctx);
         let active_total = contexts.iter().filter(|c| !c.archived).count();
-        runner::render_checks_panel(&results, None, active_total, verbose);
+        runner::render_checks_panel(&results, None, owner, active_total, verbose);
         runner::render_posture_panel(&results);
         Ok(runner::exit_code(&results))
     } else {
@@ -79,7 +79,7 @@ async fn run() -> Result<i32> {
         };
         let results = runner::run_checks(&ctx);
         let active_total = repo_contexts.iter().filter(|c| !c.archived).count();
-        runner::render_checks_panel(&results, org_ctx.as_ref(), active_total, verbose);
+        runner::render_checks_panel(&results, org_ctx.as_ref(), &account, active_total, verbose);
         runner::render_posture_panel(&results);
         Ok(runner::exit_code(&results))
     }

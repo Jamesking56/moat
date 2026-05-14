@@ -458,6 +458,7 @@ pub fn render_posture_panel(results: &[CheckResult]) {
 pub fn render_checks_panel(
     results: &[CheckResult],
     org: Option<&OrgContext>,
+    account: &str,
     active_total: usize,
     verbose: bool,
 ) {
@@ -661,23 +662,46 @@ pub fn render_checks_panel(
 
         if is_finding && !r.affected_repos.is_empty() {
             panel::blank();
-            let lbl = format!("Affected repositories ({})", r.affected_repos.len());
+            let total = r.affected_repos.len();
+            let lbl = format!("Affected repositories ({total})");
             let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
             panel::row(l);
 
-            let preview: Vec<&str> = r.affected_repos.iter().map(String::as_str).collect();
-            let rendered = if verbose || preview.len() <= 6 {
-                preview.join("  ")
-            } else {
-                format!(
-                    "{}  +{} more · --verbose to list",
-                    preview[..5].join("  "),
-                    preview.len() - 5
-                )
-            };
-            for line in panel::wrap(&rendered, text_width) {
-                let l = panel::Line::new().space(5).styled(&line, panel::text);
-                panel::row(l);
+            let longest = r
+                .affected_repos
+                .iter()
+                .map(|n| n.chars().count())
+                .max()
+                .unwrap_or(0);
+            let col_w = longest.max(12) + 2;
+            let grid_width = text_width;
+            let cols = (grid_width / col_w).max(1);
+
+            let max_rows = 4usize;
+            let cap = cols * max_rows;
+            let show = if verbose || total <= cap { total } else { cap };
+            let hyperlinks = std::io::IsTerminal::is_terminal(&std::io::stdout());
+
+            for chunk in r.affected_repos[..show].chunks(cols) {
+                let mut line = panel::Line::new().space(5);
+                for name in chunk {
+                    let url = format!("https://github.com/{account}/{name}");
+                    let styled = panel::text(name);
+                    let cell = if hyperlinks {
+                        format!("\x1b]8;;{url}\x1b\\{styled}\x1b]8;;\x1b\\")
+                    } else {
+                        styled
+                    };
+                    line = line.raw(name, &cell);
+                    let pad = col_w.saturating_sub(name.chars().count());
+                    line = line.space(pad);
+                }
+                panel::row(line);
+            }
+            if show < total {
+                let more = format!("+{} more · --verbose to list", total - show);
+                let line = panel::Line::new().space(5).styled(&more, panel::muted);
+                panel::row(line);
             }
         }
 
