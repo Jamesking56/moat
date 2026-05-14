@@ -796,6 +796,46 @@ fn prt_safe_pull_request_target_with_untrusted_checkout_fails() {
 }
 
 #[test]
+fn prt_safe_pull_request_target_with_head_ref_fails() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.workflows = WorkflowsState::Loaded(vec![wf(
+        "danger.yml",
+        "on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.head_ref }}\n",
+    )]);
+    assert_eq!(prt_safe::repo_check(&c).status, Status::Fail);
+}
+
+#[test]
+fn prt_safe_pull_request_target_case_insensitive_checkout_fails() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.workflows = WorkflowsState::Loaded(vec![wf(
+        "danger.yml",
+        "on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: Actions/Checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n",
+    )]);
+    assert_eq!(prt_safe::repo_check(&c).status, Status::Fail);
+}
+
+#[test]
+fn prt_safe_pull_request_target_third_party_checkout_fails() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.workflows = WorkflowsState::Loaded(vec![wf(
+        "danger.yml",
+        "on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: some-org/checkout/v2@v2\n        with:\n          ref: ${{ github.head_ref }}\n",
+    )]);
+    assert_eq!(prt_safe::repo_check(&c).status, Status::Fail);
+}
+
+#[test]
+fn prt_safe_pull_request_target_shell_checkout_fails() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.workflows = WorkflowsState::Loaded(vec![wf(
+        "danger.yml",
+        "on: pull_request_target\njobs:\n  a:\n    steps:\n      - run: git fetch origin ${{ github.head_ref }} && git checkout FETCH_HEAD\n",
+    )]);
+    assert_eq!(prt_safe::repo_check(&c).status, Status::Fail);
+}
+
+#[test]
 fn prt_safe_pull_request_target_without_checkout_passes() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.workflows = WorkflowsState::Loaded(vec![wf(

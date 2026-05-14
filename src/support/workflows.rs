@@ -130,16 +130,7 @@ fn walk_checkout(v: &Value, found: &mut bool) {
     }
     match v {
         Value::Mapping(m) => {
-            let is_checkout = m
-                .get(Value::String("uses".into()))
-                .and_then(Value::as_str)
-                .map(|s| s.starts_with("actions/checkout@"))
-                .unwrap_or(false);
-            if is_checkout
-                && let Some(Value::Mapping(with)) = m.get(Value::String("with".into()))
-                && let Some(Value::String(r)) = with.get(Value::String("ref".into()))
-                && r.contains("pull_request.head")
-            {
+            if step_is_untrusted_checkout(m) {
                 *found = true;
                 return;
             }
@@ -154,6 +145,35 @@ fn walk_checkout(v: &Value, found: &mut bool) {
         }
         _ => {}
     }
+}
+
+fn step_is_untrusted_checkout(step: &serde_yaml::Mapping) -> bool {
+    if let Some(Value::String(uses)) = step.get(Value::String("uses".into())) {
+        let uses_lc = uses.to_ascii_lowercase();
+        let looks_like_checkout = uses_lc.contains("checkout@") || uses_lc.contains("/checkout/");
+        if looks_like_checkout
+            && let Some(Value::Mapping(with)) = step.get(Value::String("with".into()))
+            && let Some(Value::String(r)) = with.get(Value::String("ref".into()))
+            && ref_is_untrusted(r)
+        {
+            return true;
+        }
+    }
+    if let Some(Value::String(run)) = step.get(Value::String("run".into())) {
+        let run_lc = run.to_ascii_lowercase();
+        let does_checkout = run_lc.contains("git checkout")
+            || run_lc.contains("git fetch")
+            || run_lc.contains("gh pr checkout");
+        if does_checkout && ref_is_untrusted(run) {
+            return true;
+        }
+    }
+    false
+}
+
+fn ref_is_untrusted(s: &str) -> bool {
+    let lc = s.to_ascii_lowercase();
+    lc.contains("pull_request.head") || lc.contains("head_ref")
 }
 
 pub enum PermissionsBlock<'a> {
@@ -230,4 +250,128 @@ pub fn is_pinned(uses: &str) -> bool {
         return false;
     };
     reference.len() == 40 && reference.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(yaml: &str) -> Value {
+        serde_yaml::from_str(yaml).expect("valid yaml")
+    }
+
+    #[test]
+    fn untrusted_checkout_classic_pull_request_head() {
+        let doc = parse(
+            "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n",
+        );
+        assert!(has_untrusted_checkout(&doc));
+    }
+
+    #[test]
+    fn untrusted_checkout_head_ref_expression() {
+        let doc = parse(
+            "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.head_ref }}\n",
+        );
+        assert!(has_untrusted_checkout(&doc));
+    }
+
+    #[test]
+    fn untrusted_checkout_case_insensitive_uses() {
+        let doc = parse(
+            "jobs:\n  a:\n    steps:\n      - uses: Actions/Checkout@v4\n        with:\n          ref: ${{ github.head_ref }}\n",
+        );
+        assert!(has_untrusted_checkout(&doc));
+    }
+
+    #[test]
+    fn untrusted_checkout_third_party_action() {
+        let doc = parse(
+            "jobs:\n  a:\n    steps:\n      - uses: some-org/checkout/v2@v2\n        with:\n          ref: ${{ github.event.pull_request.head.ref }}\n",
+        );
+        assert!(has_untrusted_checkout(&doc));
+    }
+
+    #[test]
+    fn untrusted_checkout_shell_git_checkout() {
+        let doc = parse(
+            "jobs:\n  a:\n    steps:\n      - run: git checkout ${{ github.event.pull_request.head.sha }}\n",
+        );
+        assert!(has_untrusted_checkout(&doc));
+    }
+
+    #[test]
+    fn untrusted_checkout_shell_git_fetch_head_ref() {
+        let doc = parse(
+            "jobs:\n  a:\n    steps:\n      - run: |\n          git fetch origin ${{ github.head_ref }}\n          git checkout FETCH_HEAD\n",
+        );
+        assert!(has_untrusted_checkout(&doc));
+    }
+
+    #[test]
+    fn untrusted_checkout_gh_pr_checkout_with_head_ref() {
+        let doc =
+            parse("jobs:\n  a:\n    steps:\n      - run: gh pr checkout ${{ github.head_ref }}\n");
+        assert!(has_untrusted_checkout(&doc));
+    }
+
+    #[test]
+    fn safe_checkout_default_ref_not_flagged() {
+        let doc = parse("jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n");
+        assert!(!has_untrusted_checkout(&doc));
+    }
+
+    #[test]
+    fn safe_checkout_explicit_main_ref_not_flagged() {
+        let doc = parse(
+            "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: main\n",
+        );
+        assert!(!has_untrusted_checkout(&doc));
+    }
+
+    #[test]
+    fn safe_checkout_base_ref_not_flagged() {
+        let doc = parse(
+            "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.base.sha }}\n",
+        );
+        assert!(!has_untrusted_checkout(&doc));
+    }
+
+    #[test]
+    fn safe_run_step_without_checkout_not_flagged() {
+        let doc = parse("jobs:\n  a:\n    steps:\n      - run: echo ${{ github.head_ref }}\n");
+        assert!(!has_untrusted_checkout(&doc));
+    }
+
+    #[test]
+    fn safe_unrelated_action_with_ref_param_not_flagged() {
+        let doc = parse(
+            "jobs:\n  a:\n    steps:\n      - uses: some-org/deploy@v1\n        with:\n          ref: ${{ github.head_ref }}\n",
+        );
+        assert!(!has_untrusted_checkout(&doc));
+    }
+
+    #[test]
+    fn pull_request_target_string_form_detected() {
+        let doc = parse("on: pull_request_target\njobs: {}\n");
+        assert!(has_pull_request_target(&doc));
+    }
+
+    #[test]
+    fn pull_request_target_sequence_form_detected() {
+        let doc = parse("on: [push, pull_request_target]\njobs: {}\n");
+        assert!(has_pull_request_target(&doc));
+    }
+
+    #[test]
+    fn pull_request_target_mapping_form_detected() {
+        let doc = parse("on:\n  pull_request_target:\n    types: [opened]\njobs: {}\n");
+        assert!(has_pull_request_target(&doc));
+    }
+
+    #[test]
+    fn pull_request_target_absent_when_only_pull_request() {
+        let doc = parse("on: pull_request\njobs: {}\n");
+        assert!(!has_pull_request_target(&doc));
+    }
 }
