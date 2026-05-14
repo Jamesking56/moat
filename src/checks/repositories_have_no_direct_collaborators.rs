@@ -4,7 +4,7 @@ use crate::checks::org_context::{MemberList, OrgContext};
 use crate::checks::repo_context::{DirectCollaboratorsState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "direct collaborators";
+pub const LABEL: &str = "repositories have no direct collaborators";
 pub const HOW_TO_FIX: &str = "GitHub → organization (or repository) → settings → collaborators and teams → under \"Manage access\", remove direct/outside users → grant access via teams instead.";
 pub const WHY_ENABLE: &str = "direct collaborators bypass org-level team membership audits and outlive role changes; access reviews miss them, so a long-departed contributor can keep push rights indefinitely.";
 

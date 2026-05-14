@@ -2,7 +2,7 @@ use crate::checks::StateCtx;
 use crate::checks::org_context::{DefaultRepoPermissionState, OrgContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "new members default permission";
+pub const LABEL: &str = "organization new members default to no permissions";
 pub const HOW_TO_FIX: &str = "GitHub → your organization → settings → member privileges → base permissions → set to \"No permission\" or \"Read\".";
 pub const WHY_ENABLE: &str = "this setting decides the blast radius of a single compromised account; with write or admin as the default, one stolen session can push to every repo at once instead of just the ones that member legitimately touches.";
 

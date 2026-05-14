@@ -263,15 +263,20 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
     let mut repo_skipped = 0usize;
     let mut repo_warned = 0usize;
     let mut repo_applicable = 0usize;
+    let mut repo_disabled = 0usize;
     let mut active_repos: Vec<&RepoContext> = Vec::new();
     if let Some(f) = check.repo_eval {
         for r in ctx.repos {
-            if r.archived || r.config.is_off(check.id) {
+            if r.archived {
                 continue;
             }
             if let Some(pred) = check.applies_to_repo
                 && !pred(r)
             {
+                continue;
+            }
+            if r.config.is_off(check.id) {
+                repo_disabled += 1;
                 continue;
             }
             active_repos.push(r);
@@ -298,14 +303,23 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
     let any_repo_warn = repo_warned > 0;
     let any_repo_pass = repo_pass > 0;
 
-    let status = if org_failed || any_repo_fail {
+    let repo_with_signal = repo_pass + repo_warned + affected.len();
+    let all_repos_disabled =
+        check.repo_eval.is_some() && repo_with_signal == 0 && repo_disabled > 0;
+
+    let status = if any_repo_fail {
         Status::Fail
-    } else if org_warned || any_repo_warn {
+    } else if any_repo_warn {
+        Status::Warn
+    } else if all_repos_disabled {
+        Status::Skipped
+    } else if org_failed {
+        Status::Fail
+    } else if org_warned {
         Status::Warn
     } else if org_passed || any_repo_pass {
         Status::Pass
     } else if org_skipped || repo_skipped > 0 || repo_applicable == 0 {
-        // Org-only check on a user account, or no applicable repos
         Status::Skipped
     } else {
         Status::Pass
@@ -358,7 +372,7 @@ fn build_summary(
     if org_only_issue && matches!(status, Status::Warn | Status::Fail) {
         return format!("{active_total}/{active_total} enabled · default policy missing");
     }
-    let denom = if check.applies_to_repo.is_some() {
+    let denom = if check.repo_eval.is_some() {
         repo_applicable
     } else {
         active_total
@@ -380,11 +394,10 @@ pub fn render_posture_panel(results: &[CheckResult]) {
         .iter()
         .filter(|r| r.status == Status::Skipped)
         .count();
-    let applicable = total.saturating_sub(skipped);
-    let pct = if applicable == 0 {
+    let pct = if total == 0 {
         100
     } else {
-        (passed * 100) / applicable
+        ((passed + skipped) * 100) / total
     };
 
     panel::top_section("security posture");
@@ -424,6 +437,10 @@ pub fn render_posture_panel(results: &[CheckResult]) {
         .styled("!", panel::warning_bold)
         .space(2)
         .styled(&format!("{warned} warnings"), panel::text)
+        .space(4)
+        .styled("—", panel::muted)
+        .space(2)
+        .styled(&format!("{skipped} skipped"), panel::muted)
         .space(4)
         .styled("·", panel::muted)
         .space(2)

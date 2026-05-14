@@ -4,7 +4,7 @@ use crate::checks::org_context::{OrgContext, ReleaseImmutabilityState};
 use crate::checks::repo_context::{ReleaseImmutabilityRepoState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "release immutability";
+pub const LABEL: &str = "repositories releases are immutable";
 pub const HOW_TO_FIX: &str = "GitHub → your organization → settings → repository → general → under \"Releases\", set immutable releases to \"All repositories\" (per-repo: settings → general → under \"Releases\", enable \"Immutable releases\").";
 pub const WHY_ENABLE: &str = "without immutability, an existing tag can be moved or its assets replaced after the fact; downstream consumers pinned to a version they audited will silently fetch different bytes the next time they install.";
 

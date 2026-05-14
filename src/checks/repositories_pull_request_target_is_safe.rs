@@ -4,7 +4,7 @@ use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
 use crate::support::workflows::{self, WorkflowsState};
 
-pub const LABEL: &str = "pull_request_target trigger";
+pub const LABEL: &str = "repositories pull request target is safe";
 pub const HOW_TO_FIX: &str = "switch the trigger to `pull_request`, or ensure the workflow does not check out `github.event.pull_request.head.ref` (only check out the base ref).";
 pub const WHY_ENABLE: &str = "`pull_request_target` runs with the base repo's secrets and write token; if the workflow then checks out the PR's code, any fork PR executes attacker-controlled code with full repo privileges.";
 

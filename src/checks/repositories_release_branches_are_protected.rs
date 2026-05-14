@@ -4,7 +4,7 @@ use crate::checks::org_context::{OrgContext, RulesetsState};
 use crate::checks::repo_context::{BranchEval, BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "protected release branches";
+pub const LABEL: &str = "repositories release branches are protected";
 pub const HOW_TO_FIX: &str = "GitHub → organization (or repository) → settings → rules → \"New ruleset\" → \"New branch ruleset\" → target your release branches (main, master, x.x) and set enforcement status to \"Active\".";
 pub const WHY_ENABLE: &str = "every other branch-level safeguard (signed commits, required reviews, linear history) hangs off a ruleset — with no ruleset attached to your release branches, none of those protections apply.";
 

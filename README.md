@@ -151,7 +151,7 @@ Pinning actions to SHAs is only safe if something keeps them up to date; without
 
 ## Configuration
 
-`moat` looks for a `moat.toml` file at the root of each audited repository. Use it to disable checks that don't apply to that repo. Disabled checks are still shown in the output (as `off`) but don't count toward the failure total.
+`moat` looks for a `moat.toml` file at the root of each audited repository. Use it to disable checks that don't apply to that repo. Disabled checks render as `SKIPPED` in the output and don't count toward the failure total.
 
 ```toml
 [checks]

@@ -4,7 +4,7 @@ use crate::checks::org_context::{FeatureDefaultState, OrgContext};
 use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "secret scanning";
+pub const LABEL: &str = "repositories secret scanning is enabled";
 pub const HOW_TO_FIX: &str = "GitHub → your organization → settings → advanced security → configurations → open the configuration that enables \"Secret scanning\" → under \"Policy\", set \"Use as default for newly created repositories\" to apply to your repositories → Save configuration (per-repo: either apply a configuration that enables it — org settings → advanced security → configurations → next to the configuration, click \"Apply to\" and select the repo — or open the repo directly: settings → advanced security → enable \"Secret scanning\").";
 pub const WHY_ENABLE: &str = "secrets accidentally committed stay valid until someone notices; scanning gives you minutes-to-hours warning instead of waiting for a leaked-credential abuse alert from a downstream provider.";
 

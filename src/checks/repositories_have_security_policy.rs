@@ -3,7 +3,7 @@ use crate::checks::common::public_repos_word;
 use crate::checks::repo_context::{FilePresence, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "security policy";
+pub const LABEL: &str = "repositories have security policy";
 pub const HOW_TO_FIX: &str = "add a `SECURITY.md` at the repo root (or in `.github/`) — point it at a private disclosure channel (email or GitHub advisories).";
 pub const WHY_ENABLE: &str = "without a disclosure channel, well-meaning researchers file public issues with full PoCs — `SECURITY.md` is what funnels them to a private channel before the world sees the bug.";
 
