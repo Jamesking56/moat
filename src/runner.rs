@@ -133,10 +133,10 @@ pub async fn fetch_org_context(client: &impl GitHubClient, org: &str) -> Result<
 }
 
 /// How many progress ticks an org-context fetch will emit.
-pub const ORG_TICKS: usize = 9;
+pub const ORG_TICKS: usize = 11;
 
 /// How many progress ticks a per-repo scan emits (excluding the initial "scanning N" tick).
-pub const REPO_TICKS: usize = 10;
+pub const REPO_TICKS: usize = 15;
 
 pub async fn list_repos(
     client: &impl GitHubClient,
