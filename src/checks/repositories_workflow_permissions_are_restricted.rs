@@ -27,6 +27,22 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
             }
             _ => {}
         }
+        for (job, block) in workflows::job_level_permissions(&wf.doc) {
+            match block {
+                PermissionsBlock::WriteAll => {
+                    findings.push(format!("{}: job `{}` write-all", wf.path, job));
+                }
+                PermissionsBlock::Scoped(writes) if !writes.is_empty() => {
+                    findings.push(format!(
+                        "{}: job `{}` write scopes [{}]",
+                        wf.path,
+                        job,
+                        writes.join(", ")
+                    ));
+                }
+                _ => {}
+            }
+        }
     }
 
     if findings.is_empty() {
@@ -48,10 +64,20 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
             applicable += 1;
             let mut repo_bad = 0usize;
             for wf in wfs {
-                match workflows::top_level_permissions(&wf.doc) {
-                    PermissionsBlock::Missing | PermissionsBlock::WriteAll => repo_bad += 1,
-                    PermissionsBlock::Scoped(w) if !w.is_empty() => repo_bad += 1,
-                    _ => {}
+                let top_bad = match workflows::top_level_permissions(&wf.doc) {
+                    PermissionsBlock::Missing | PermissionsBlock::WriteAll => true,
+                    PermissionsBlock::Scoped(w) if !w.is_empty() => true,
+                    _ => false,
+                };
+                let job_bad =
+                    workflows::job_level_permissions(&wf.doc)
+                        .into_iter()
+                        .any(|(_, b)| {
+                            matches!(b, PermissionsBlock::WriteAll)
+                                || matches!(b, PermissionsBlock::Scoped(w) if !w.is_empty())
+                        });
+                if top_bad || job_bad {
+                    repo_bad += 1;
                 }
             }
             if repo_bad > 0 {

@@ -171,6 +171,36 @@ pub fn top_level_permissions(doc: &Value) -> PermissionsBlock<'_> {
     let Some(p) = top.get(Value::String("permissions".into())) else {
         return PermissionsBlock::Missing;
     };
+    parse_permissions(p)
+}
+
+/// Returns each job that declares its own `permissions:` block, paired with that
+/// block's classification. Used to catch job-level writes that escalate beyond
+/// a restrictive top-level grant.
+pub fn job_level_permissions(doc: &Value) -> Vec<(String, PermissionsBlock<'_>)> {
+    let mut out = Vec::new();
+    let Value::Mapping(top) = doc else {
+        return out;
+    };
+    let Some(Value::Mapping(jobs)) = top.get(Value::String("jobs".into())) else {
+        return out;
+    };
+    for (name, job) in jobs {
+        let Value::String(job_name) = name else {
+            continue;
+        };
+        let Value::Mapping(jm) = job else {
+            continue;
+        };
+        let Some(p) = jm.get(Value::String("permissions".into())) else {
+            continue;
+        };
+        out.push((job_name.clone(), parse_permissions(p)));
+    }
+    out
+}
+
+fn parse_permissions(p: &Value) -> PermissionsBlock<'_> {
     match p {
         Value::String(s) if s == "write-all" => PermissionsBlock::WriteAll,
         Value::String(s) if s == "read-all" => PermissionsBlock::ReadAll,

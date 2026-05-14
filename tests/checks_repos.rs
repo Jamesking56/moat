@@ -893,6 +893,48 @@ fn workflow_perms_read_only_passes() {
     assert_eq!(workflow_perms::repo_check(&c).status, Status::Pass);
 }
 
+#[test]
+fn workflow_perms_job_level_write_all_fails() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.workflows = WorkflowsState::Loaded(vec![wf(
+        "ci.yml",
+        "on: push\npermissions:\n  contents: read\njobs:\n  a:\n    permissions: write-all\n    steps:\n      - run: echo\n",
+    )]);
+    let o = workflow_perms::repo_check(&c);
+    assert_eq!(o.status, Status::Fail);
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.contains("job `a`") && i.contains("write-all"))
+    );
+}
+
+#[test]
+fn workflow_perms_job_level_scoped_write_fails() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.workflows = WorkflowsState::Loaded(vec![wf(
+        "ci.yml",
+        "on: push\npermissions:\n  contents: read\njobs:\n  release:\n    permissions:\n      contents: write\n      issues: read\n    steps:\n      - run: echo\n",
+    )]);
+    let o = workflow_perms::repo_check(&c);
+    assert_eq!(o.status, Status::Fail);
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.contains("job `release`") && i.contains("contents"))
+    );
+}
+
+#[test]
+fn workflow_perms_job_level_read_only_passes() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.workflows = WorkflowsState::Loaded(vec![wf(
+        "ci.yml",
+        "on: push\npermissions:\n  contents: read\njobs:\n  a:\n    permissions:\n      contents: read\n    steps:\n      - run: echo\n",
+    )]);
+    assert_eq!(workflow_perms::repo_check(&c).status, Status::Pass);
+}
+
 #[tokio::test]
 async fn repo_context_fetch_no_default_branch() {
     let client = FakeGitHubClient::new()
