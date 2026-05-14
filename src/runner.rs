@@ -674,7 +674,7 @@ pub fn render_checks_panel(
                 .max()
                 .unwrap_or(0);
             let col_w = longest.max(12) + 2;
-            let grid_width = text_width;
+            let grid_width = text_width.saturating_sub(2);
             let cols = (grid_width / col_w).max(1);
 
             let max_rows = 4usize;
@@ -683,7 +683,7 @@ pub fn render_checks_panel(
             let hyperlinks = std::io::IsTerminal::is_terminal(&std::io::stdout());
 
             for chunk in r.affected_repos[..show].chunks(cols) {
-                let mut line = panel::Line::new().space(5);
+                let mut line = panel::Line::new().space(7);
                 for name in chunk {
                     let url = format!("https://github.com/{account}/{name}");
                     let styled = panel::text(name);
@@ -700,7 +700,7 @@ pub fn render_checks_panel(
             }
             if show < total {
                 let more = format!("+{} more · --verbose to list", total - show);
-                let line = panel::Line::new().space(5).styled(&more, panel::muted);
+                let line = panel::Line::new().space(7).styled(&more, panel::muted);
                 panel::row(line);
             }
         }
@@ -729,7 +729,7 @@ fn render_member_block(title: &str, list: &MemberList, text_width: usize, verbos
             let lbl = format!("{title} (0)");
             let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
             panel::row(l);
-            let none = panel::Line::new().space(5).styled("None", panel::muted);
+            let none = panel::Line::new().space(7).styled("None", panel::muted);
             panel::row(none);
         }
         MemberList::Ok(v) => {
@@ -746,8 +746,8 @@ fn render_member_block(title: &str, list: &MemberList, text_width: usize, verbos
                     preview.len() - 5
                 )
             };
-            for line in panel::wrap(&rendered, text_width) {
-                let l = panel::Line::new().space(5).styled(&line, panel::text);
+            for line in panel::wrap(&rendered, text_width.saturating_sub(2)) {
+                let l = panel::Line::new().space(7).styled(&line, panel::text);
                 panel::row(l);
             }
         }
