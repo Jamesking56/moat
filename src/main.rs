@@ -6,13 +6,16 @@ use moat::{cli, support};
 
 #[tokio::main]
 async fn main() {
-    if let Err(e) = run().await {
-        eprintln!("{} {e}", panel::danger_bold("error:"));
-        std::process::exit(1);
+    match run().await {
+        Ok(code) => std::process::exit(code),
+        Err(e) => {
+            eprintln!("{} {e}", panel::danger_bold("error:"));
+            std::process::exit(1);
+        }
     }
 }
 
-async fn run() -> Result<()> {
+async fn run() -> Result<i32> {
     let cli = cli::Cli::parse();
     panel::init_theme(cli.theme.into());
     let token = support::github::resolve_token()?;
@@ -42,6 +45,7 @@ async fn run() -> Result<()> {
         let active_total = contexts.iter().filter(|c| !c.archived).count();
         runner::render_checks_panel(&results, None, active_total, verbose);
         runner::render_posture_panel(&results);
+        Ok(runner::exit_code(&results))
     } else {
         let kind = runner::ensure_viewer_can_audit_account(&client, &account).await?;
         runner::print_header(&account, kind);
@@ -77,7 +81,6 @@ async fn run() -> Result<()> {
         let active_total = repo_contexts.iter().filter(|c| !c.archived).count();
         runner::render_checks_panel(&results, org_ctx.as_ref(), active_total, verbose);
         runner::render_posture_panel(&results);
+        Ok(runner::exit_code(&results))
     }
-
-    Ok(())
 }

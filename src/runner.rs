@@ -227,6 +227,14 @@ pub struct CheckResult {
     pub org_only_issue: bool,
 }
 
+pub fn exit_code(results: &[CheckResult]) -> i32 {
+    if results.iter().any(|r| r.status == Status::Fail) {
+        1
+    } else {
+        0
+    }
+}
+
 pub fn run_checks(ctx: &CheckContext<'_>) -> Vec<CheckResult> {
     let active_total = ctx.repos.iter().filter(|c| !c.archived).count();
 

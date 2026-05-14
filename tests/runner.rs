@@ -1,6 +1,41 @@
-use moat::runner::{self, AccountKind};
+use moat::checks::CHECKS;
+use moat::runner::{self, AccountKind, CheckResult};
 use moat::support::github::FakeGitHubClient;
+use moat::support::outcome::Status;
 use serde_json::json;
+
+fn result_with(status: Status) -> CheckResult {
+    CheckResult {
+        check: &CHECKS[0],
+        status,
+        summary: String::new(),
+        state_note: None,
+        affected_repos: Vec::new(),
+        org_default_issue: false,
+        org_only_issue: false,
+    }
+}
+
+#[test]
+fn exit_code_is_zero_when_no_failures() {
+    let results = vec![
+        result_with(Status::Pass),
+        result_with(Status::Warn),
+        result_with(Status::Skipped),
+    ];
+    assert_eq!(runner::exit_code(&results), 0);
+}
+
+#[test]
+fn exit_code_is_one_when_any_check_fails() {
+    let results = vec![result_with(Status::Pass), result_with(Status::Fail)];
+    assert_eq!(runner::exit_code(&results), 1);
+}
+
+#[test]
+fn exit_code_is_zero_for_empty_results() {
+    assert_eq!(runner::exit_code(&[]), 0);
+}
 
 #[tokio::test]
 async fn detect_account_resolves_organization() {
