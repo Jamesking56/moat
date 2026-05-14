@@ -1,7 +1,7 @@
 use crate::checks::org_context::{MemberList, OrgContext};
 use crate::checks::repo_context::{RepoContext, RepoListing};
 use crate::checks::{CHECKS, Check, Scope};
-use crate::support::github::{Client, Fetch};
+use crate::support::github::{Fetch, GitHubClient};
 use crate::support::outcome::Status;
 use crate::support::panel;
 use anyhow::{Result, anyhow, bail};
@@ -59,7 +59,7 @@ fn not_admin_bail(target: &str) -> anyhow::Error {
 /// viewer must be that user. Returns the resolved account kind so callers can
 /// skip a second `detect_account` round-trip.
 pub async fn ensure_viewer_can_audit_account(
-    client: &Client,
+    client: &impl GitHubClient,
     account: &str,
 ) -> Result<AccountKind> {
     let kind = detect_account(client, account).await?;
@@ -88,7 +88,7 @@ pub async fn ensure_viewer_can_audit_account(
 
 /// Pre-flight: ensure the viewer is an admin of the given single repo.
 pub async fn ensure_viewer_can_audit_repo(
-    client: &Client,
+    client: &impl GitHubClient,
     owner: &str,
     repo: &str,
 ) -> Result<RepoListing> {
@@ -111,7 +111,7 @@ pub async fn ensure_viewer_can_audit_repo(
     Ok(listing)
 }
 
-pub async fn detect_account(client: &Client, name: &str) -> Result<AccountKind> {
+pub async fn detect_account(client: &impl GitHubClient, name: &str) -> Result<AccountKind> {
     match client
         .get_json::<AccountType>(&format!("/users/{name}"))
         .await?
@@ -126,7 +126,7 @@ pub async fn detect_account(client: &Client, name: &str) -> Result<AccountKind> 
     }
 }
 
-pub async fn fetch_org_context(client: &Client, org: &str) -> Result<OrgContext> {
+pub async fn fetch_org_context(client: &impl GitHubClient, org: &str) -> Result<OrgContext> {
     panel::progress("fetching organization");
     OrgContext::fetch(client, org).await
 }
@@ -138,7 +138,7 @@ pub const ORG_TICKS: usize = 9;
 pub const REPO_TICKS: usize = 10;
 
 pub async fn list_repos(
-    client: &Client,
+    client: &impl GitHubClient,
     account: &str,
     kind: AccountKind,
 ) -> Result<Vec<RepoListing>> {
@@ -161,7 +161,7 @@ pub async fn list_repos(
 }
 
 pub async fn fetch_repo_contexts_from(
-    client: &Client,
+    client: &impl GitHubClient,
     account: &str,
     listings: Vec<RepoListing>,
 ) -> Result<Vec<RepoContext>> {
@@ -169,7 +169,7 @@ pub async fn fetch_repo_contexts_from(
 }
 
 pub async fn fetch_repo_contexts(
-    client: &Client,
+    client: &impl GitHubClient,
     account: &str,
     kind: AccountKind,
 ) -> Result<Vec<RepoContext>> {
@@ -178,7 +178,7 @@ pub async fn fetch_repo_contexts(
 }
 
 pub async fn fetch_single_repo_context(
-    client: &Client,
+    client: &impl GitHubClient,
     owner: &str,
     listing: RepoListing,
 ) -> Result<Vec<RepoContext>> {
@@ -186,7 +186,7 @@ pub async fn fetch_single_repo_context(
 }
 
 async fn fetch_contexts(
-    client: &Client,
+    client: &impl GitHubClient,
     account: &str,
     listings: Vec<RepoListing>,
 ) -> Result<Vec<RepoContext>> {

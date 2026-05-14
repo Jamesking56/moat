@@ -1,4 +1,4 @@
-use crate::support::github::{Client, Fetch};
+use crate::support::github::{Fetch, GitHubClient};
 use crate::support::outcome::CheckOutcome;
 use crate::support::panel;
 use anyhow::Result;
@@ -205,7 +205,10 @@ struct WebhookConfig {
     secret: Option<String>,
 }
 
-pub(crate) async fn fetch_webhooks(client: &Client, path: &str) -> Result<WebhooksState> {
+pub(crate) async fn fetch_webhooks(
+    client: &impl GitHubClient,
+    path: &str,
+) -> Result<WebhooksState> {
     match client.get_paginated::<Webhook>(path).await? {
         Fetch::Ok(v) => Ok(WebhooksState::Ok(
             v.into_iter()
@@ -252,7 +255,7 @@ pub fn evaluate_webhooks(state: &WebhooksState) -> CheckOutcome {
 }
 
 pub(crate) async fn locate_security_md(
-    client: &Client,
+    client: &impl GitHubClient,
     org: &str,
     repo: &str,
 ) -> Result<FilePresence> {

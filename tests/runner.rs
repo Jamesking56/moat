@@ -1,53 +1,48 @@
-use assert_cmd::Command;
 use moat::runner::{self, AccountKind};
-use moat::support::github::Client;
-use predicates::prelude::*;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use moat::support::github::FakeGitHubClient;
+use serde_json::json;
 
-fn moat() -> Command {
-    let mut c = Command::cargo_bin("moat").unwrap();
-    c.env_remove("GH_TOKEN").env("GITHUB_TOKEN", "test-token");
-    c
+#[tokio::test]
+async fn detect_account_resolves_organization() {
+    let client =
+        FakeGitHubClient::new().with_json("/users/acme", json!({ "type": "Organization" }));
+    let k = runner::detect_account(&client, "acme").await.unwrap();
+    assert!(matches!(k, AccountKind::Organization));
 }
 
-async fn stub_org(server: &MockServer, org: &str) {
-    Mock::given(method("GET"))
-        .and(path(format!("/users/{org}")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "type": "Organization"
-        })))
-        .mount(server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(format!("/user/memberships/orgs/{org}")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "role": "admin",
-            "state": "active"
-        })))
-        .mount(server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(format!("/orgs/{org}")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "two_factor_requirement_enabled": true
-        })))
-        .mount(server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(format!("/orgs/{org}/members")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .mount(server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(format!("/orgs/{org}/outside_collaborators")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .mount(server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(format!("/orgs/{org}/repos")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
-            {
+#[tokio::test]
+async fn detect_account_resolves_user() {
+    let client = FakeGitHubClient::new().with_json("/users/nuno", json!({ "type": "User" }));
+    let k = runner::detect_account(&client, "nuno").await.unwrap();
+    assert!(matches!(k, AccountKind::User));
+}
+
+#[tokio::test]
+async fn detect_account_404_is_friendly_error() {
+    let client = FakeGitHubClient::new().with_not_found("/users/ghost");
+    let e = runner::detect_account(&client, "ghost").await.unwrap_err();
+    assert!(e.to_string().contains("ghost"));
+}
+
+#[tokio::test]
+async fn detect_account_403_is_scope_error() {
+    let client = FakeGitHubClient::new().with_forbidden("/users/secret");
+    let e = runner::detect_account(&client, "secret").await.unwrap_err();
+    assert!(e.to_string().contains("scope"));
+}
+
+fn stub_org(org: &str) -> FakeGitHubClient {
+    FakeGitHubClient::new()
+        .with_json(
+            format!("/orgs/{org}"),
+            json!({ "two_factor_requirement_enabled": true }),
+        )
+        .with_paginated(format!("/orgs/{org}/members?filter=2fa_disabled"), vec![])
+        .with_paginated(format!("/orgs/{org}/members?role=admin"), vec![])
+        .with_paginated(format!("/orgs/{org}/outside_collaborators"), vec![])
+        .with_paginated(
+            format!("/orgs/{org}/repos?type=all"),
+            vec![json!({
                 "name": "demo",
                 "archived": false,
                 "fork": false,
@@ -56,95 +51,25 @@ async fn stub_org(server: &MockServer, org: &str) {
                     "secret_scanning": { "status": "enabled" },
                     "secret_scanning_push_protection": { "status": "enabled" }
                 }
-            }
-        ])))
-        .mount(server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(format!("/repos/{org}/demo/branches/main/protection")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "required_signatures": { "enabled": true },
-            "required_pull_request_reviews": {}
-        })))
-        .mount(server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(format!(
-            "/repos/{org}/demo/actions/permissions/workflow"
-        )))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "default_workflow_permissions": "read"
-        })))
-        .mount(server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(format!("/repos/{org}/demo/vulnerability-alerts")))
-        .respond_with(ResponseTemplate::new(204))
-        .mount(server)
-        .await;
-}
-
-#[tokio::test]
-async fn detect_account_resolves_organization() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/users/acme"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "type": "Organization" })),
+            })],
         )
-        .mount(&server)
-        .await;
-    let client = Client::with_base_url("t".into(), server.uri()).unwrap();
-    let k = runner::detect_account(&client, "acme").await.unwrap();
-    assert!(matches!(k, AccountKind::Organization));
-}
-
-#[tokio::test]
-async fn detect_account_resolves_user() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/users/nuno"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "type": "User" })),
+        .with_json(
+            format!("/repos/{org}/demo/branches/main/protection"),
+            json!({
+                "required_signatures": { "enabled": true },
+                "required_pull_request_reviews": {}
+            }),
         )
-        .mount(&server)
-        .await;
-    let client = Client::with_base_url("t".into(), server.uri()).unwrap();
-    let k = runner::detect_account(&client, "nuno").await.unwrap();
-    assert!(matches!(k, AccountKind::User));
+        .with_json(
+            format!("/repos/{org}/demo/actions/permissions/workflow"),
+            json!({ "default_workflow_permissions": "read" }),
+        )
+        .with_status(format!("/repos/{org}/demo/vulnerability-alerts"), 204)
 }
 
 #[tokio::test]
-async fn detect_account_404_is_friendly_error() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/users/ghost"))
-        .respond_with(ResponseTemplate::new(404))
-        .mount(&server)
-        .await;
-    let client = Client::with_base_url("t".into(), server.uri()).unwrap();
-    let e = runner::detect_account(&client, "ghost").await.unwrap_err();
-    assert!(e.to_string().contains("ghost"));
-}
-
-#[tokio::test]
-async fn detect_account_403_is_scope_error() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/users/secret"))
-        .respond_with(ResponseTemplate::new(403))
-        .mount(&server)
-        .await;
-    let client = Client::with_base_url("t".into(), server.uri()).unwrap();
-    let e = runner::detect_account(&client, "secret").await.unwrap_err();
-    assert!(e.to_string().contains("scope"));
-}
-
-#[tokio::test]
-async fn run_org_checks_completes_against_mocked_server() {
-    let server = MockServer::start().await;
-    stub_org(&server, "acme").await;
-    let client = Client::with_base_url("t".into(), server.uri()).unwrap();
+async fn run_org_checks_completes_against_fake_client() {
+    let client = stub_org("acme");
     let org = runner::fetch_org_context(&client, "acme").await.unwrap();
     let repos: Vec<moat::checks::RepoContext> = Vec::new();
     let ctx = runner::CheckContext {
@@ -157,10 +82,8 @@ async fn run_org_checks_completes_against_mocked_server() {
 }
 
 #[tokio::test]
-async fn run_repo_checks_completes_against_mocked_server() {
-    let server = MockServer::start().await;
-    stub_org(&server, "acme").await;
-    let client = Client::with_base_url("t".into(), server.uri()).unwrap();
+async fn run_repo_checks_completes_against_fake_client() {
+    let client = stub_org("acme");
     let contexts = runner::fetch_repo_contexts(&client, "acme", AccountKind::Organization)
         .await
         .unwrap();
@@ -174,50 +97,12 @@ async fn run_repo_checks_completes_against_mocked_server() {
 }
 
 #[tokio::test]
-async fn full_cli_audit_against_mocked_github() {
-    let server = MockServer::start().await;
-    stub_org(&server, "acme").await;
-
-    moat()
-        .env("MOAT_GITHUB_API_BASE", server.uri())
-        .args(["acme"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("moat"))
-        .stdout(predicate::str::contains("acme"))
-        .stdout(predicate::str::contains("security posture"))
-        .stdout(predicate::str::contains("hardened"))
-        .stdout(predicate::str::contains("checks"));
-}
-
-#[tokio::test]
-async fn cli_audit_user_account_runs_repo_checks_only() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/users/nuno"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "type": "User" })),
-        )
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/users/nuno/repos"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([])))
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path("/user"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "login": "nuno" })),
-        )
-        .mount(&server)
-        .await;
-
-    moat()
-        .env("MOAT_GITHUB_API_BASE", server.uri())
-        .args(["nuno"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("user"))
-        .stdout(predicate::str::contains("security posture"));
+async fn user_account_repo_checks_with_empty_listing() {
+    let client = FakeGitHubClient::new()
+        .with_json("/users/nuno", json!({ "type": "User" }))
+        .with_paginated("/users/nuno/repos", vec![]);
+    let contexts = runner::fetch_repo_contexts(&client, "nuno", AccountKind::User)
+        .await
+        .unwrap();
+    assert!(contexts.is_empty());
 }

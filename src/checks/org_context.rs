@@ -1,5 +1,5 @@
 use crate::checks::common::{self, CollaboratorEntry};
-use crate::support::github::{Client, Fetch};
+use crate::support::github::{Fetch, GitHubClient};
 use crate::support::outcome::CheckOutcome;
 use anyhow::Result;
 use futures::future::try_join_all;
@@ -180,7 +180,7 @@ struct User {
 }
 
 impl OrgContext {
-    pub async fn fetch(client: &Client, org: &str) -> Result<Self> {
+    pub async fn fetch(client: &impl GitHubClient, org: &str) -> Result<Self> {
         let org_path = format!("/orgs/{org}");
         let immut_path = format!("/orgs/{org}/settings/immutable-releases");
         let fork_pr_path = format!("/orgs/{org}/actions/permissions/fork-pr-contributor-approval");
@@ -355,7 +355,7 @@ struct OrgPvrResponse {
 }
 
 async fn fetch_org_private_vulnerability_reporting(
-    client: &Client,
+    client: &impl GitHubClient,
     org: &str,
 ) -> Result<FeatureState> {
     Ok(
@@ -395,7 +395,7 @@ struct RulesetRule {
     rule_type: String,
 }
 
-async fn fetch_org_rulesets(client: &Client, org: &str) -> Result<OrgRulesets> {
+async fn fetch_org_rulesets(client: &impl GitHubClient, org: &str) -> Result<OrgRulesets> {
     let summaries: Vec<RulesetSummary> = match client
         .get_paginated::<RulesetSummary>(&format!("/orgs/{org}/rulesets"))
         .await?
@@ -458,7 +458,7 @@ fn feature_default(value: Option<&str>) -> FeatureDefaultState {
     }
 }
 
-async fn fetch_logins(client: &Client, path: &str) -> Result<MemberList> {
+async fn fetch_logins(client: &impl GitHubClient, path: &str) -> Result<MemberList> {
     match client.get_paginated::<User>(path).await? {
         Fetch::Ok(users) => Ok(MemberList::Ok(users.into_iter().map(|u| u.login).collect())),
         Fetch::Forbidden => Ok(MemberList::NoPermission),
@@ -477,7 +477,7 @@ struct RepoBrief {
     archived: bool,
 }
 
-async fn fetch_outside_collaborators(client: &Client, org: &str) -> Result<MemberList> {
+async fn fetch_outside_collaborators(client: &impl GitHubClient, org: &str) -> Result<MemberList> {
     let outside_path = format!("/orgs/{org}/outside_collaborators");
     let repos_path = format!("/orgs/{org}/repos?type=all");
     let (all, repos_resp) = tokio::try_join!(

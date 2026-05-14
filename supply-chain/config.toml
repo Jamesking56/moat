@@ -112,10 +112,6 @@ criteria = "safe-to-run"
 version = "0.3.14"
 criteria = "safe-to-deploy"
 
-[[exemptions.fastrand]]
-version = "2.4.1"
-criteria = "safe-to-run"
-
 [[exemptions.find-msvc-tools]]
 version = "0.1.9"
 criteria = "safe-to-deploy"
@@ -172,17 +168,9 @@ criteria = "safe-to-deploy"
 version = "0.3.4"
 criteria = "safe-to-deploy"
 
-[[exemptions.getrandom]]
-version = "0.4.1"
-criteria = "safe-to-run"
-
 [[exemptions.h2]]
 version = "0.4.14"
 criteria = "safe-to-deploy"
-
-[[exemptions.hashbrown]]
-version = "0.14.5"
-criteria = "safe-to-run"
 
 [[exemptions.hashbrown]]
 version = "0.17.1"
@@ -247,10 +235,6 @@ criteria = "safe-to-deploy"
 [[exemptions.icu_provider]]
 version = "2.2.0"
 criteria = "safe-to-deploy"
-
-[[exemptions.id-arena]]
-version = "2.3.0"
-criteria = "safe-to-run"
 
 [[exemptions.idna_adapter]]
 version = "1.2.2"
@@ -328,10 +312,6 @@ criteria = "safe-to-deploy"
 version = "0.2.21"
 criteria = "safe-to-deploy"
 
-[[exemptions.prettyplease]]
-version = "0.2.37"
-criteria = "safe-to-run"
-
 [[exemptions.quinn]]
 version = "0.11.9"
 criteria = "safe-to-deploy"
@@ -347,10 +327,6 @@ criteria = "safe-to-deploy"
 [[exemptions.r-efi]]
 version = "5.3.0"
 criteria = "safe-to-deploy"
-
-[[exemptions.r-efi]]
-version = "6.0.0"
-criteria = "safe-to-run"
 
 [[exemptions.rand]]
 version = "0.9.4"
@@ -403,10 +379,6 @@ criteria = "safe-to-deploy"
 [[exemptions.ryu]]
 version = "1.0.23"
 criteria = "safe-to-deploy"
-
-[[exemptions.semver]]
-version = "1.0.28"
-criteria = "safe-to-run"
 
 [[exemptions.serde]]
 version = "1.0.228"
@@ -697,24 +669,8 @@ version = "0.6.5"
 criteria = "safe-to-run"
 
 [[exemptions.wit-bindgen]]
-version = "0.51.0"
-criteria = "safe-to-run"
-
-[[exemptions.wit-bindgen]]
 version = "0.57.1"
 criteria = "safe-to-deploy"
-
-[[exemptions.wit-bindgen-core]]
-version = "0.51.0"
-criteria = "safe-to-run"
-
-[[exemptions.wit-bindgen-rust]]
-version = "0.51.0"
-criteria = "safe-to-run"
-
-[[exemptions.wit-bindgen-rust-macro]]
-version = "0.51.0"
-criteria = "safe-to-run"
 
 [[exemptions.writeable]]
 version = "0.6.3"

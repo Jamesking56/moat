@@ -1,6 +1,6 @@
 use crate::checks::common::{self, CollaboratorEntry};
 use crate::config::Config;
-use crate::support::github::{Client, Fetch, Fetch403};
+use crate::support::github::{Fetch, Fetch403, GitHubClient};
 use crate::support::outcome::CheckOutcome;
 use crate::support::workflows::{self, WorkflowsState};
 use anyhow::Result;
@@ -245,7 +245,7 @@ struct WorkflowPerms {
 }
 
 impl RepoContext {
-    pub async fn fetch(client: &Client, org: &str, repo: RepoListing) -> Result<Self> {
+    pub async fn fetch(client: &impl GitHubClient, org: &str, repo: RepoListing) -> Result<Self> {
         if repo.fork {
             return Ok(Self {
                 name: repo.name,
@@ -400,7 +400,7 @@ struct ImmutableReleasesRepo {
 }
 
 async fn fetch_release_immutability(
-    client: &Client,
+    client: &impl GitHubClient,
     org: &str,
     repo: &str,
 ) -> Result<ReleaseImmutabilityRepoState> {
@@ -422,7 +422,7 @@ struct ForkPrApprovalRepo {
 }
 
 async fn fetch_fork_pr_contributor_approval(
-    client: &Client,
+    client: &impl GitHubClient,
     org: &str,
     repo: &str,
 ) -> Result<ForkPrContributorApprovalState> {
@@ -457,7 +457,11 @@ struct ActionsPermissions {
     sha_pinning_required: Option<bool>,
 }
 
-async fn fetch_sha_pinning(client: &Client, org: &str, repo: &str) -> Result<SHAPinningState> {
+async fn fetch_sha_pinning(
+    client: &impl GitHubClient,
+    org: &str,
+    repo: &str,
+) -> Result<SHAPinningState> {
     Ok(
         match client
             .get_json::<ActionsPermissions>(&format!("/repos/{org}/{repo}/actions/permissions"))
@@ -474,7 +478,7 @@ async fn fetch_sha_pinning(client: &Client, org: &str, repo: &str) -> Result<SHA
 }
 
 async fn fetch_branch_protection(
-    client: &Client,
+    client: &impl GitHubClient,
     org: &str,
     repo: &str,
     branch: &str,
@@ -532,7 +536,7 @@ struct RulesetFlags {
 }
 
 async fn fetch_branch_rules(
-    client: &Client,
+    client: &impl GitHubClient,
     org: &str,
     repo: &str,
     branch: &str,
@@ -562,7 +566,11 @@ struct BranchEntry {
     name: String,
 }
 
-async fn fetch_branch_entries(client: &Client, org: &str, repo: &str) -> Result<Vec<BranchEntry>> {
+async fn fetch_branch_entries(
+    client: &impl GitHubClient,
+    org: &str,
+    repo: &str,
+) -> Result<Vec<BranchEntry>> {
     Ok(
         match client
             .get_paginated::<BranchEntry>(&format!("/repos/{org}/{repo}/branches"))
@@ -604,7 +612,7 @@ fn compute_release_branches(
 }
 
 async fn fetch_all_branch_protections(
-    client: &Client,
+    client: &impl GitHubClient,
     org: &str,
     repo: &str,
     branches: &[String],
@@ -617,7 +625,7 @@ async fn fetch_all_branch_protections(
 }
 
 async fn fetch_workflow_token(
-    client: &Client,
+    client: &impl GitHubClient,
     org: &str,
     repo: &str,
 ) -> Result<WorkflowTokenState> {
@@ -633,7 +641,11 @@ async fn fetch_workflow_token(
     )
 }
 
-async fn fetch_dependabot_alerts(client: &Client, org: &str, repo: &str) -> Result<FeatureState> {
+async fn fetch_dependabot_alerts(
+    client: &impl GitHubClient,
+    org: &str,
+    repo: &str,
+) -> Result<FeatureState> {
     Ok(
         match client
             .get_presence(&format!("/repos/{org}/{repo}/vulnerability-alerts"))
@@ -652,7 +664,7 @@ struct PrivateVulnReporting {
 }
 
 async fn fetch_private_vulnerability_reporting(
-    client: &Client,
+    client: &impl GitHubClient,
     org: &str,
     repo: &str,
     private: bool,
@@ -688,7 +700,7 @@ fn is_release_pattern(name: &str) -> bool {
     matches!(chars.next(), Some('x') | Some('X')) && chars.next().is_none()
 }
 
-async fn fetch_config(client: &Client, org: &str, repo: &str) -> Result<Config> {
+async fn fetch_config(client: &impl GitHubClient, org: &str, repo: &str) -> Result<Config> {
     match client
         .get_raw(&format!(
             "/repos/{org}/{repo}/contents/{}",
@@ -723,7 +735,7 @@ fn pick_feature(
 }
 
 async fn fetch_dependabot_config(
-    client: &Client,
+    client: &impl GitHubClient,
     org: &str,
     repo: &str,
 ) -> Result<DependabotConfigState> {
@@ -764,7 +776,7 @@ fn parse_has_github_actions(text: &str) -> bool {
 }
 
 async fn fetch_direct_collaborators(
-    client: &Client,
+    client: &impl GitHubClient,
     org: &str,
     repo: &str,
     private: bool,

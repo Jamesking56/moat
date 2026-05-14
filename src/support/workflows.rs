@@ -1,4 +1,4 @@
-use crate::support::github::{Client, Fetch};
+use crate::support::github::{Fetch, GitHubClient};
 use anyhow::Result;
 use futures::future::try_join_all;
 use serde::Deserialize;
@@ -22,7 +22,11 @@ struct ContentEntry {
     kind: String,
 }
 
-pub async fn fetch_workflows(client: &Client, owner: &str, repo: &str) -> Result<WorkflowsState> {
+pub async fn fetch_workflows(
+    client: &impl GitHubClient,
+    owner: &str,
+    repo: &str,
+) -> Result<WorkflowsState> {
     let listing_path = format!("/repos/{owner}/{repo}/contents/.github/workflows");
     let entries: Vec<ContentEntry> =
         match client.get_json::<Vec<ContentEntry>>(&listing_path).await? {

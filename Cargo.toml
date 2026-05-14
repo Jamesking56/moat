@@ -1,9 +1,9 @@
 [package]
 name = "moat"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2024"
 rust-version = "1.88"
-description = "Supply-chain security auditor for GitHub organizations"
+description = "supply-chain hygiene for your github organization & repositories"
 license = "MIT"
 repository = "https://github.com/nunomaduro/moat"
 homepage = "https://github.com/nunomaduro/moat"
@@ -35,8 +35,6 @@ terminal_size = "0.4"
 wiremock = "0.6"
 assert_cmd = "2"
 predicates = "3"
-tempfile = "3"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
 
 [profile.release]
 lto = "thin"
