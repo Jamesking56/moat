@@ -52,6 +52,7 @@ pub struct RepoContext {
     pub release_immutability: ReleaseImmutabilityRepoState,
     pub fork_pr_contributor_approval: ForkPrContributorApprovalState,
     pub sha_pinning: SHAPinningState,
+    pub codeowners: FilePresence,
     pub config: Config,
 }
 
@@ -59,6 +60,9 @@ pub enum BranchProtectionState {
     Protected {
         signed_commits: bool,
         pr_reviews: bool,
+        pr_dismiss_stale_reviews: bool,
+        pr_require_last_push_approval: bool,
+        pr_require_code_owner_review: bool,
         enforce_admins: bool,
         required_linear_history: bool,
         allow_force_pushes: bool,
@@ -227,11 +231,23 @@ pub struct FeatureStatus {
 #[derive(Deserialize)]
 struct BranchProtection {
     required_signatures: Option<EnabledFlag>,
-    required_pull_request_reviews: Option<serde::de::IgnoredAny>,
+    required_pull_request_reviews: Option<RequiredPullRequestReviews>,
     enforce_admins: Option<EnabledFlag>,
     required_linear_history: Option<EnabledFlag>,
     allow_force_pushes: Option<EnabledFlag>,
     allow_deletions: Option<EnabledFlag>,
+}
+
+#[derive(Deserialize, Default)]
+struct RequiredPullRequestReviews {
+    #[serde(default)]
+    required_approving_review_count: Option<u32>,
+    #[serde(default)]
+    dismiss_stale_reviews: Option<bool>,
+    #[serde(default)]
+    require_code_owner_reviews: Option<bool>,
+    #[serde(default)]
+    require_last_push_approval: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -266,6 +282,7 @@ impl RepoContext {
                 release_immutability: ReleaseImmutabilityRepoState::Unknown,
                 fork_pr_contributor_approval: ForkPrContributorApprovalState::Unknown,
                 sha_pinning: SHAPinningState::Unknown,
+                codeowners: FilePresence::Unknown,
                 config: Config::default(),
             });
         }
@@ -300,6 +317,7 @@ impl RepoContext {
             release_immutability,
             fork_pr_contributor_approval,
             sha_pinning,
+            codeowners,
         ) = tokio::try_join!(
             traced(
                 &repo.name,
@@ -361,6 +379,11 @@ impl RepoContext {
                 "SHA pinning enforcement",
                 fetch_sha_pinning(client, org, &repo.name),
             ),
+            traced(
+                &repo.name,
+                "CODEOWNERS",
+                common::locate_codeowners(client, org, &repo.name),
+            ),
         )?;
 
         let branch_protections = BranchProtections { branches };
@@ -389,6 +412,7 @@ impl RepoContext {
             release_immutability,
             fork_pr_contributor_approval,
             sha_pinning,
+            codeowners,
             config,
         })
     }
@@ -490,24 +514,47 @@ async fn fetch_branch_protection(
     )?;
 
     Ok(match classic {
-        Fetch403::Ok(bp) => BranchProtectionState::Protected {
-            signed_commits: bp.required_signatures.map(|s| s.enabled).unwrap_or(false)
-                || rules.signed_commits,
-            pr_reviews: bp.required_pull_request_reviews.is_some() || rules.pr_reviews,
-            enforce_admins: bp.enforce_admins.map(|e| e.enabled).unwrap_or(false) || rules.any,
-            required_linear_history: bp
-                .required_linear_history
-                .map(|e| e.enabled)
-                .unwrap_or(false)
-                || rules.required_linear_history,
-            allow_force_pushes: bp.allow_force_pushes.map(|e| e.enabled).unwrap_or(false)
-                && !rules.non_fast_forward,
-            allow_deletions: bp.allow_deletions.map(|e| e.enabled).unwrap_or(false)
-                && !rules.deletion,
-        },
+        Fetch403::Ok(bp) => {
+            let classic_pr = bp.required_pull_request_reviews.as_ref();
+            let classic_pr_reviews = classic_pr.is_some_and(|r| {
+                r.required_approving_review_count
+                    .map(|n| n >= 1)
+                    .unwrap_or(true)
+            });
+            BranchProtectionState::Protected {
+                signed_commits: bp.required_signatures.map(|s| s.enabled).unwrap_or(false)
+                    || rules.signed_commits,
+                pr_reviews: classic_pr_reviews || rules.pr_reviews,
+                pr_dismiss_stale_reviews: classic_pr
+                    .and_then(|r| r.dismiss_stale_reviews)
+                    .unwrap_or(false)
+                    || rules.pr_dismiss_stale_reviews,
+                pr_require_last_push_approval: classic_pr
+                    .and_then(|r| r.require_last_push_approval)
+                    .unwrap_or(false)
+                    || rules.pr_require_last_push_approval,
+                pr_require_code_owner_review: classic_pr
+                    .and_then(|r| r.require_code_owner_reviews)
+                    .unwrap_or(false)
+                    || rules.pr_require_code_owner_review,
+                enforce_admins: bp.enforce_admins.map(|e| e.enabled).unwrap_or(false) || rules.any,
+                required_linear_history: bp
+                    .required_linear_history
+                    .map(|e| e.enabled)
+                    .unwrap_or(false)
+                    || rules.required_linear_history,
+                allow_force_pushes: bp.allow_force_pushes.map(|e| e.enabled).unwrap_or(false)
+                    && !rules.non_fast_forward,
+                allow_deletions: bp.allow_deletions.map(|e| e.enabled).unwrap_or(false)
+                    && !rules.deletion,
+            }
+        }
         Fetch403::NotFound if rules.any => BranchProtectionState::Protected {
             signed_commits: rules.signed_commits,
             pr_reviews: rules.pr_reviews,
+            pr_dismiss_stale_reviews: rules.pr_dismiss_stale_reviews,
+            pr_require_last_push_approval: rules.pr_require_last_push_approval,
+            pr_require_code_owner_review: rules.pr_require_code_owner_review,
             enforce_admins: true,
             required_linear_history: rules.required_linear_history,
             allow_force_pushes: !rules.non_fast_forward,
@@ -523,6 +570,20 @@ async fn fetch_branch_protection(
 struct RuleEntry {
     #[serde(rename = "type")]
     rule_type: String,
+    #[serde(default)]
+    parameters: Option<RulePullRequestParams>,
+}
+
+#[derive(Deserialize, Default)]
+struct RulePullRequestParams {
+    #[serde(default)]
+    required_approving_review_count: Option<u32>,
+    #[serde(default)]
+    dismiss_stale_reviews_on_push: Option<bool>,
+    #[serde(default)]
+    require_last_push_approval: Option<bool>,
+    #[serde(default)]
+    require_code_owner_review: Option<bool>,
 }
 
 #[derive(Default)]
@@ -530,6 +591,9 @@ struct RulesetFlags {
     any: bool,
     signed_commits: bool,
     pr_reviews: bool,
+    pr_dismiss_stale_reviews: bool,
+    pr_require_last_push_approval: bool,
+    pr_require_code_owner_review: bool,
     required_linear_history: bool,
     non_fast_forward: bool,
     deletion: bool,
@@ -551,7 +615,22 @@ async fn fetch_branch_rules(
         flags.any = true;
         match entry.rule_type.as_str() {
             "required_signatures" => flags.signed_commits = true,
-            "pull_request" => flags.pr_reviews = true,
+            "pull_request" => {
+                let params = entry.parameters.unwrap_or_default();
+                let count = params.required_approving_review_count.unwrap_or(0);
+                if count >= 1 {
+                    flags.pr_reviews = true;
+                }
+                if params.dismiss_stale_reviews_on_push.unwrap_or(false) {
+                    flags.pr_dismiss_stale_reviews = true;
+                }
+                if params.require_last_push_approval.unwrap_or(false) {
+                    flags.pr_require_last_push_approval = true;
+                }
+                if params.require_code_owner_review.unwrap_or(false) {
+                    flags.pr_require_code_owner_review = true;
+                }
+            }
             "required_linear_history" => flags.required_linear_history = true,
             "non_fast_forward" => flags.non_fast_forward = true,
             "deletion" => flags.deletion = true,

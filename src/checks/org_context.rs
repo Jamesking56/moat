@@ -40,6 +40,9 @@ pub struct OrgRulesets {
     pub any_active: bool,
     pub required_signatures: bool,
     pub pull_request: bool,
+    pub pr_dismiss_stale_reviews: bool,
+    pub pr_require_last_push_approval: bool,
+    pub pr_require_code_owner_review: bool,
     pub required_linear_history: bool,
     pub non_fast_forward: bool,
     pub deletion: bool,
@@ -59,6 +62,9 @@ impl OrgRulesets {
             any_active: false,
             required_signatures: false,
             pull_request: false,
+            pr_dismiss_stale_reviews: false,
+            pr_require_last_push_approval: false,
+            pr_require_code_owner_review: false,
             required_linear_history: false,
             non_fast_forward: false,
             deletion: false,
@@ -429,6 +435,12 @@ struct RulesetRule {
 struct RuleParameters {
     #[serde(default)]
     required_approving_review_count: Option<u32>,
+    #[serde(default)]
+    dismiss_stale_reviews_on_push: Option<bool>,
+    #[serde(default)]
+    require_last_push_approval: Option<bool>,
+    #[serde(default)]
+    require_code_owner_review: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -522,13 +534,30 @@ pub async fn fetch_org_rulesets(client: &impl GitHubClient, org: &str) -> Result
             match rule.rule_type.as_str() {
                 "required_signatures" => out.required_signatures = true,
                 "pull_request" => {
-                    let count = rule
-                        .parameters
-                        .as_ref()
+                    let params = rule.parameters.as_ref();
+                    let count = params
                         .and_then(|p| p.required_approving_review_count)
                         .unwrap_or(0);
                     if count >= 1 {
                         out.pull_request = true;
+                    }
+                    if params
+                        .and_then(|p| p.dismiss_stale_reviews_on_push)
+                        .unwrap_or(false)
+                    {
+                        out.pr_dismiss_stale_reviews = true;
+                    }
+                    if params
+                        .and_then(|p| p.require_last_push_approval)
+                        .unwrap_or(false)
+                    {
+                        out.pr_require_last_push_approval = true;
+                    }
+                    if params
+                        .and_then(|p| p.require_code_owner_review)
+                        .unwrap_or(false)
+                    {
+                        out.pr_require_code_owner_review = true;
                     }
                 }
                 "required_linear_history" => out.required_linear_history = true,

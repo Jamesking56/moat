@@ -248,3 +248,58 @@ async fn forbidden_listing_yields_no_permission() {
     let r = fetch_org_rulesets(&client, "acme").await.unwrap();
     assert_eq!(r.state as u8, RulesetsState::NoPermission as u8);
 }
+
+#[tokio::test]
+async fn captures_pull_request_sub_parameters() {
+    let client = FakeGitHubClient::new()
+        .with_paginated(
+            "/orgs/acme/rulesets",
+            summaries(&[1]).as_array().unwrap().clone(),
+        )
+        .with_json(
+            "/orgs/acme/rulesets/1",
+            ruleset(
+                json!([{
+                    "type": "pull_request",
+                    "parameters": {
+                        "required_approving_review_count": 1,
+                        "dismiss_stale_reviews_on_push": true,
+                        "require_last_push_approval": true,
+                        "require_code_owner_review": true,
+                    },
+                }]),
+                org_wide_conditions(),
+            ),
+        );
+
+    let r = fetch_org_rulesets(&client, "acme").await.unwrap();
+    assert!(r.pull_request);
+    assert!(r.pr_dismiss_stale_reviews);
+    assert!(r.pr_require_last_push_approval);
+    assert!(r.pr_require_code_owner_review);
+}
+
+#[tokio::test]
+async fn pull_request_sub_parameters_default_to_false_when_absent() {
+    let client = FakeGitHubClient::new()
+        .with_paginated(
+            "/orgs/acme/rulesets",
+            summaries(&[1]).as_array().unwrap().clone(),
+        )
+        .with_json(
+            "/orgs/acme/rulesets/1",
+            ruleset(
+                json!([{
+                    "type": "pull_request",
+                    "parameters": { "required_approving_review_count": 1 },
+                }]),
+                org_wide_conditions(),
+            ),
+        );
+
+    let r = fetch_org_rulesets(&client, "acme").await.unwrap();
+    assert!(r.pull_request);
+    assert!(!r.pr_dismiss_stale_reviews);
+    assert!(!r.pr_require_last_push_approval);
+    assert!(!r.pr_require_code_owner_review);
+}

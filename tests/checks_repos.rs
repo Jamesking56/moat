@@ -36,6 +36,9 @@ fn protected(signed_commits: bool, pr_reviews: bool) -> BranchProtectionState {
     BranchProtectionState::Protected {
         signed_commits,
         pr_reviews,
+        pr_dismiss_stale_reviews: pr_reviews,
+        pr_require_last_push_approval: pr_reviews,
+        pr_require_code_owner_review: pr_reviews,
         enforce_admins: false,
         required_linear_history: false,
         allow_force_pushes: false,
@@ -63,6 +66,7 @@ fn ctx(branch: BranchProtectionState, token: WorkflowTokenState) -> RepoContext 
         release_immutability: ReleaseImmutabilityRepoState::Enabled,
         fork_pr_contributor_approval: ForkPrContributorApprovalState::AllExternalContributors,
         sha_pinning: SHAPinningState::Enforced,
+        codeowners: FilePresence::Absent,
         config: moat::config::Config::default(),
     }
 }
@@ -118,6 +122,82 @@ fn pr_reviews_flag_routing() {
     let fail = ctx(protected(true, false), WorkflowTokenState::Read);
     assert_eq!(pr_reviews::repo_check(&pass).status, Status::Pass);
     assert_eq!(pr_reviews::repo_check(&fail).status, Status::Fail);
+}
+
+fn protected_pr(
+    pr_reviews: bool,
+    dismiss: bool,
+    last_push: bool,
+    code_owner: bool,
+) -> BranchProtectionState {
+    BranchProtectionState::Protected {
+        signed_commits: false,
+        pr_reviews,
+        pr_dismiss_stale_reviews: dismiss,
+        pr_require_last_push_approval: last_push,
+        pr_require_code_owner_review: code_owner,
+        enforce_admins: false,
+        required_linear_history: false,
+        allow_force_pushes: false,
+        allow_deletions: false,
+    }
+}
+
+#[test]
+fn pr_reviews_repo_check_lists_missing_sub_requirements() {
+    let c = ctx(
+        protected_pr(true, false, false, false),
+        WorkflowTokenState::Read,
+    );
+    let out = pr_reviews::repo_check(&c);
+    assert_eq!(out.status, Status::Fail);
+    assert!(
+        out.items
+            .iter()
+            .any(|i| i.contains("stale reviews not dismissed"))
+    );
+    assert!(
+        out.items
+            .iter()
+            .any(|i| i.contains("last-push approval not required"))
+    );
+    // CODEOWNERS absent → code-owner-review failure must be suppressed.
+    assert!(!out.items.iter().any(|i| i.contains("code-owner review")));
+}
+
+#[test]
+fn pr_reviews_repo_check_requires_code_owner_review_when_codeowners_present() {
+    let mut c = ctx(
+        protected_pr(true, true, true, false),
+        WorkflowTokenState::Read,
+    );
+    c.codeowners = FilePresence::Present;
+    let out = pr_reviews::repo_check(&c);
+    assert_eq!(out.status, Status::Fail);
+    assert_eq!(out.items.len(), 1);
+    assert!(out.items[0].contains("code-owner review not required"));
+}
+
+#[test]
+fn pr_reviews_repo_check_passes_when_all_sub_requirements_met() {
+    let mut c = ctx(
+        protected_pr(true, true, true, true),
+        WorkflowTokenState::Read,
+    );
+    c.codeowners = FilePresence::Present;
+    let out = pr_reviews::repo_check(&c);
+    assert_eq!(out.status, Status::Pass);
+}
+
+#[test]
+fn pr_reviews_repo_check_reports_reviews_not_required_first() {
+    let c = ctx(
+        protected_pr(false, false, false, false),
+        WorkflowTokenState::Read,
+    );
+    let out = pr_reviews::repo_check(&c);
+    assert_eq!(out.status, Status::Fail);
+    assert_eq!(out.items, vec!["reviews not required".to_string()]);
 }
 
 #[test]
@@ -360,6 +440,9 @@ fn protected_full(
     BranchProtectionState::Protected {
         signed_commits: false,
         pr_reviews: false,
+        pr_dismiss_stale_reviews: false,
+        pr_require_last_push_approval: false,
+        pr_require_code_owner_review: false,
         enforce_admins,
         required_linear_history,
         allow_force_pushes,

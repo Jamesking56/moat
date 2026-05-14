@@ -13,6 +13,7 @@ use moat::checks::{
     repositories_default_branch_is_locked as immutable_branch,
     repositories_fork_pull_requests_require_approval as fork_pr_approval,
     repositories_private_vulnerability_reporting_is_enabled as pvr,
+    repositories_pull_requests_require_reviews as pr_reviews_org,
     repositories_releases_are_immutable as releases_immutable,
     repositories_webhooks_are_secure as webhooks_secure,
 };
@@ -226,6 +227,9 @@ fn rulesets(
         any_active,
         required_signatures: false,
         pull_request: false,
+        pr_dismiss_stale_reviews: false,
+        pr_require_last_push_approval: false,
+        pr_require_code_owner_review: false,
         required_linear_history,
         non_fast_forward,
         deletion,
@@ -420,4 +424,72 @@ async fn org_context_fetch_marks_forbidden_endpoints_as_no_permission() {
         MemberList::NoPermission
     ));
     assert!(matches!(ctx.admins, MemberList::NoPermission));
+}
+
+fn rulesets_with_pr(
+    pull_request: bool,
+    dismiss: bool,
+    last_push: bool,
+    code_owner: bool,
+) -> OrgRulesets {
+    OrgRulesets {
+        state: RulesetsState::Loaded,
+        any_active: true,
+        required_signatures: false,
+        pull_request,
+        pr_dismiss_stale_reviews: dismiss,
+        pr_require_last_push_approval: last_push,
+        pr_require_code_owner_review: code_owner,
+        required_linear_history: false,
+        non_fast_forward: false,
+        deletion: false,
+        has_bypass_actors: false,
+    }
+}
+
+#[test]
+fn pr_reviews_org_check_no_permission_skipped() {
+    let mut c = base_ctx();
+    c.rulesets = OrgRulesets::empty(RulesetsState::NoPermission);
+    assert_eq!(pr_reviews_org::org_check(&c).status, Status::Skipped);
+}
+
+#[test]
+fn pr_reviews_org_check_no_pull_request_rule_fails() {
+    let mut c = base_ctx();
+    c.rulesets = rulesets_with_pr(false, true, true, true);
+    let o = pr_reviews_org::org_check(&c);
+    assert_eq!(o.status, Status::Fail);
+    assert!(o.summary.contains("not required"));
+}
+
+#[test]
+fn pr_reviews_org_check_lists_missing_sub_requirements() {
+    let mut c = base_ctx();
+    c.rulesets = rulesets_with_pr(true, false, false, false);
+    let o = pr_reviews_org::org_check(&c);
+    assert_eq!(o.status, Status::Fail);
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.contains("stale reviews not dismissed"))
+    );
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.contains("last-push approval not required"))
+    );
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.contains("code-owner review not required"))
+    );
+}
+
+#[test]
+fn pr_reviews_org_check_passes_when_all_sub_flags_set() {
+    let mut c = base_ctx();
+    c.rulesets = rulesets_with_pr(true, true, true, true);
+    let o = pr_reviews_org::org_check(&c);
+    assert_eq!(o.status, Status::Pass);
 }

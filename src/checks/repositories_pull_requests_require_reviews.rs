@@ -1,46 +1,154 @@
 use crate::checks::StateCtx;
-use crate::checks::common::ruleset_state_phrase;
+use crate::checks::common::{FilePresence, repos_word};
 use crate::checks::org_context::{OrgContext, RulesetsState};
-use crate::checks::repo_context::{BranchProtectionState, RepoContext};
+use crate::checks::repo_context::{BranchEval, BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "repositories pull requests require reviews";
-pub const HOW_TO_FIX: &str = "GitHub → organization (or repository) → settings → rules → edit the ruleset for your release branches → under \"Rules\", enable \"Require a pull request before merging\" and set required approvals to 1 or more.";
-pub const WHY_ENABLE: &str = "without required reviews, a single compromised contributor account can push directly to a release branch — peer review is the cheapest mechanism that catches malicious patches before they ship.";
+pub const HOW_TO_FIX: &str = "GitHub → organization (or repository) → settings → rules → edit the ruleset for your release branches → under \"Rules\", enable \"Require a pull request before merging\" with required approvals ≥ 1, \"Dismiss stale pull request approvals when new commits are pushed\", \"Require approval of the most recent reviewable push\", and (when a CODEOWNERS file is present) \"Require review from Code Owners\".";
+pub const WHY_ENABLE: &str = "without required reviews, a single compromised contributor account can push directly to a release branch — peer review is the cheapest mechanism that catches malicious patches before they ship. Stale-review dismissal and last-push approval close the gap where an attacker amends a previously-approved PR; code-owner review ensures changes to sensitive paths are seen by the right people.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     if ctx.rulesets.state == RulesetsState::NoPermission {
         return CheckOutcome::skipped("?");
     }
-    if ctx.rulesets.pull_request {
+    if !ctx.rulesets.pull_request {
+        return CheckOutcome::fail("not required by any org-level ruleset");
+    }
+    let mut missing: Vec<&str> = Vec::new();
+    if !ctx.rulesets.pr_dismiss_stale_reviews {
+        missing.push("stale reviews not dismissed on new push");
+    }
+    if !ctx.rulesets.pr_require_last_push_approval {
+        missing.push("last-push approval not required");
+    }
+    if !ctx.rulesets.pr_require_code_owner_review {
+        missing.push("code-owner review not required");
+    }
+    if missing.is_empty() {
         CheckOutcome::pass("required by an org-level ruleset")
     } else {
-        CheckOutcome::fail("not required by any org-level ruleset")
+        CheckOutcome::fail(
+            "required by an org-level ruleset, but some sub-requirements are missing",
+        )
+        .with_items(missing.into_iter().map(String::from).collect())
     }
 }
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
-    ctx.branch_protections.aggregate_flag(|s| match s {
-        BranchProtectionState::Protected { pr_reviews, .. } => Some(*pr_reviews),
-        _ => None,
+    let codeowners_present = matches!(ctx.codeowners, FilePresence::Present);
+    ctx.branch_protections.aggregate(|state| match state {
+        BranchProtectionState::Protected {
+            pr_reviews,
+            pr_dismiss_stale_reviews,
+            pr_require_last_push_approval,
+            pr_require_code_owner_review,
+            ..
+        } => {
+            if !*pr_reviews {
+                return BranchEval::Fail(vec!["reviews not required".into()]);
+            }
+            let mut reasons: Vec<String> = Vec::new();
+            if !*pr_dismiss_stale_reviews {
+                reasons.push("stale reviews not dismissed on new push".into());
+            }
+            if !*pr_require_last_push_approval {
+                reasons.push("last-push approval not required".into());
+            }
+            if codeowners_present && !*pr_require_code_owner_review {
+                reasons.push("code-owner review not required (CODEOWNERS present)".into());
+            }
+            if reasons.is_empty() {
+                BranchEval::Pass
+            } else {
+                BranchEval::Fail(reasons)
+            }
+        }
+        BranchProtectionState::Unprotected => BranchEval::Fail(Vec::new()),
+        BranchProtectionState::NoPermission => BranchEval::Unknown,
+        BranchProtectionState::PlanGated => BranchEval::PlanGated,
     })
 }
 
 pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
-    let org_required = ctx.org.and_then(|o| {
+    let org_fully_required = ctx.org.and_then(|o| {
         if o.rulesets.state == RulesetsState::NoPermission {
             None
         } else {
-            Some(o.rulesets.pull_request)
+            Some(
+                o.rulesets.pull_request
+                    && o.rulesets.pr_dismiss_stale_reviews
+                    && o.rulesets.pr_require_last_push_approval
+                    && o.rulesets.pr_require_code_owner_review,
+            )
         }
     });
-    ruleset_state_phrase(
-        "pull request reviews",
-        ctx.repos,
-        |s| match s {
-            BranchProtectionState::Protected { pr_reviews, .. } => Some(*pr_reviews),
-            _ => None,
-        },
-        org_required,
-    )
+
+    let total = ctx.repos.len();
+    let missing = count_repos_missing_full_pr_reviews(ctx.repos);
+
+    Some(match (org_fully_required, missing) {
+        (Some(true), 0) if total > 0 => format!(
+            "the full pull-request review policy (approval, stale dismissal, last-push approval, code-owner review) is required by an org-level ruleset and enforced on every release branch across all {total} {}",
+            repos_word(total)
+        ),
+        (Some(true), n) => format!(
+            "the full pull-request review policy is required by an org-level ruleset but not fully enforced on release branches in {n}/{total} {}",
+            repos_word(total)
+        ),
+        (Some(false), 0) if total > 0 => format!(
+            "no org-level ruleset requires the full pull-request review policy, though every release branch across {total} {} enforces it",
+            repos_word(total)
+        ),
+        (Some(false), n) if n > 0 => format!(
+            "no org-level ruleset requires the full pull-request review policy; {n}/{total} {} miss one or more sub-requirements (stale dismissal, last-push approval, or code-owner review when CODEOWNERS is present) on release branches",
+            repos_word(total)
+        ),
+        (Some(false), _) => {
+            "no org-level ruleset requires the full pull-request review policy".to_string()
+        }
+        (None, 0) if total > 0 => format!(
+            "the full pull-request review policy is enforced on release branches across all {total} {}",
+            repos_word(total)
+        ),
+        (None, n) if n > 0 => format!(
+            "{n}/{total} {} miss one or more sub-requirements of the pull-request review policy (stale dismissal, last-push approval, or code-owner review when CODEOWNERS is present) on release branches",
+            repos_word(total)
+        ),
+        _ => return None,
+    })
+}
+
+fn count_repos_missing_full_pr_reviews(repos: &[&RepoContext]) -> usize {
+    let mut count = 0;
+    for r in repos {
+        let codeowners_present = matches!(r.codeowners, FilePresence::Present);
+        let mut any_fail = false;
+        for (_, state) in &r.branch_protections.branches {
+            let fails = match state {
+                BranchProtectionState::Protected {
+                    pr_reviews,
+                    pr_dismiss_stale_reviews,
+                    pr_require_last_push_approval,
+                    pr_require_code_owner_review,
+                    ..
+                } => {
+                    !*pr_reviews
+                        || !*pr_dismiss_stale_reviews
+                        || !*pr_require_last_push_approval
+                        || (codeowners_present && !*pr_require_code_owner_review)
+                }
+                BranchProtectionState::Unprotected => true,
+                BranchProtectionState::NoPermission | BranchProtectionState::PlanGated => false,
+            };
+            if fails {
+                any_fail = true;
+                break;
+            }
+        }
+        if any_fail {
+            count += 1;
+        }
+    }
+    count
 }

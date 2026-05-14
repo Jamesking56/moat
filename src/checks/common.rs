@@ -272,6 +272,24 @@ pub(crate) async fn locate_security_md(
     Ok(FilePresence::Absent)
 }
 
+pub(crate) async fn locate_codeowners(
+    client: &impl GitHubClient,
+    org: &str,
+    repo: &str,
+) -> Result<FilePresence> {
+    for path in ["CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"] {
+        match client
+            .get_presence(&format!("/repos/{org}/{repo}/contents/{path}"))
+            .await?
+        {
+            Fetch::Ok(_) => return Ok(FilePresence::Present),
+            Fetch::Forbidden => return Ok(FilePresence::Unknown),
+            Fetch::NotFound => {}
+        }
+    }
+    Ok(FilePresence::Absent)
+}
+
 #[derive(Deserialize)]
 pub(crate) struct CollaboratorEntry {
     pub login: String,
