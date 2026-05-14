@@ -40,6 +40,13 @@ moat <your-org>
 moat <owner>/<repo>
 ```
 
+### Options
+
+- `-v`, `--verbose` — display all collaborators and members instead of truncating the list.
+- `--theme <auto|dark|light>` — color theme. Defaults to `auto`, which detects the terminal background via `COLORFGBG`.
+- `-h`, `--help` — print help.
+- `-V`, `--version` — print version.
+
 ## Authentication
 
 `moat` resolves a GitHub token in this order:
@@ -164,6 +171,12 @@ repositories_workflow_actions_are_pinned = "off"
 ```
 
 Values are `"on"` (default) or `"off"`. Use any check ID from the [Checks](#checks) section above.
+
+You can also declare additional release branches that should be treated as protected alongside the default branch and any branches matching the built-in release patterns:
+
+```toml
+release_branches = ["0.x", "1.x"]
+```
 
 ## Exit Codes
 
