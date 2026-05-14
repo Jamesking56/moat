@@ -98,75 +98,29 @@ fn rewrite_header_right(s: &ProgressState, right: &str) {
     std::io::stdout().flush().ok();
 }
 
-const BORDER_RGB: (u8, u8, u8) = (38, 50, 68);
-const TEXT_RGB: (u8, u8, u8) = (229, 231, 235);
-const MUTED_RGB: (u8, u8, u8) = (124, 132, 151);
-const SUCCESS_RGB: (u8, u8, u8) = (126, 231, 135);
-const WARNING_RGB: (u8, u8, u8) = (242, 204, 96);
-const DANGER_RGB: (u8, u8, u8) = (239, 83, 80);
-const INFO_RGB: (u8, u8, u8) = (138, 180, 255);
-const ACCENT_RGB: (u8, u8, u8) = (192, 132, 252);
-
-pub fn border(s: &str) -> String {
-    s.truecolor(BORDER_RGB.0, BORDER_RGB.1, BORDER_RGB.2)
-        .to_string()
-}
-pub fn text(s: &str) -> String {
-    s.truecolor(TEXT_RGB.0, TEXT_RGB.1, TEXT_RGB.2).to_string()
-}
-pub fn text_bold(s: &str) -> String {
-    s.truecolor(TEXT_RGB.0, TEXT_RGB.1, TEXT_RGB.2)
-        .bold()
-        .to_string()
-}
-pub fn muted(s: &str) -> String {
-    s.truecolor(MUTED_RGB.0, MUTED_RGB.1, MUTED_RGB.2)
-        .to_string()
-}
-pub fn success(s: &str) -> String {
-    s.truecolor(SUCCESS_RGB.0, SUCCESS_RGB.1, SUCCESS_RGB.2)
-        .to_string()
-}
-pub fn success_bold(s: &str) -> String {
-    s.truecolor(SUCCESS_RGB.0, SUCCESS_RGB.1, SUCCESS_RGB.2)
-        .bold()
-        .to_string()
-}
-pub fn warning(s: &str) -> String {
-    s.truecolor(WARNING_RGB.0, WARNING_RGB.1, WARNING_RGB.2)
-        .to_string()
-}
-pub fn warning_bold(s: &str) -> String {
-    s.truecolor(WARNING_RGB.0, WARNING_RGB.1, WARNING_RGB.2)
-        .bold()
-        .to_string()
-}
-pub fn danger(s: &str) -> String {
-    s.truecolor(DANGER_RGB.0, DANGER_RGB.1, DANGER_RGB.2)
-        .to_string()
-}
-pub fn danger_bold(s: &str) -> String {
-    s.truecolor(DANGER_RGB.0, DANGER_RGB.1, DANGER_RGB.2)
-        .bold()
-        .to_string()
-}
-pub fn info(s: &str) -> String {
-    s.truecolor(INFO_RGB.0, INFO_RGB.1, INFO_RGB.2).to_string()
-}
-pub fn accent(s: &str) -> String {
-    s.truecolor(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2)
-        .to_string()
-}
-pub fn accent_bold(s: &str) -> String {
-    s.truecolor(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2)
-        .bold()
-        .to_string()
+#[derive(Clone, Copy)]
+pub struct Palette {
+    pub border: (u8, u8, u8),
+    pub text: (u8, u8, u8),
+    pub muted: (u8, u8, u8),
+    pub success: (u8, u8, u8),
+    pub warning: (u8, u8, u8),
+    pub danger: (u8, u8, u8),
+    pub info: (u8, u8, u8),
+    pub accent: (u8, u8, u8),
+    pub gradient: [(u8, u8, u8); 20],
 }
 
-/// 20-stop red → yellow → green gradient. Returns the RGB for bucket `idx`
-/// out of `total` positions.
-fn gradient_rgb(idx: usize, total: usize) -> (u8, u8, u8) {
-    const STOPS: [(u8, u8, u8); 20] = [
+const DARK_PALETTE: Palette = Palette {
+    border: (38, 50, 68),
+    text: (229, 231, 235),
+    muted: (124, 132, 151),
+    success: (126, 231, 135),
+    warning: (242, 204, 96),
+    danger: (239, 83, 80),
+    info: (138, 180, 255),
+    accent: (192, 132, 252),
+    gradient: [
         (239, 83, 80),
         (239, 96, 82),
         (240, 110, 84),
@@ -187,10 +141,145 @@ fn gradient_rgb(idx: usize, total: usize) -> (u8, u8, u8) {
         (139, 228, 130),
         (132, 230, 133),
         (126, 231, 135),
-    ];
+    ],
+};
+
+const LIGHT_PALETTE: Palette = Palette {
+    border: (148, 163, 184),
+    text: (15, 23, 42),
+    muted: (71, 85, 105),
+    success: (21, 128, 61),
+    warning: (180, 83, 9),
+    danger: (185, 28, 28),
+    info: (29, 78, 216),
+    accent: (126, 34, 206),
+    gradient: [
+        (185, 28, 28),
+        (188, 41, 24),
+        (190, 55, 21),
+        (193, 68, 17),
+        (195, 82, 14),
+        (198, 95, 10),
+        (200, 109, 7),
+        (203, 122, 3),
+        (205, 136, 0),
+        (180, 130, 5),
+        (155, 132, 12),
+        (130, 134, 19),
+        (105, 137, 27),
+        (80, 139, 34),
+        (60, 138, 40),
+        (45, 134, 47),
+        (33, 130, 54),
+        (24, 127, 58),
+        (21, 128, 61),
+        (20, 110, 53),
+    ],
+};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ThemeChoice {
+    #[default]
+    Auto,
+    Dark,
+    Light,
+}
+
+static PALETTE: OnceLock<Palette> = OnceLock::new();
+
+pub fn init_theme(choice: ThemeChoice) {
+    let palette = match choice {
+        ThemeChoice::Dark => DARK_PALETTE,
+        ThemeChoice::Light => LIGHT_PALETTE,
+        ThemeChoice::Auto => {
+            if detect_light_background() {
+                LIGHT_PALETTE
+            } else {
+                DARK_PALETTE
+            }
+        }
+    };
+    let _ = PALETTE.set(palette);
+}
+
+fn palette() -> &'static Palette {
+    PALETTE.get_or_init(|| {
+        if detect_light_background() {
+            LIGHT_PALETTE
+        } else {
+            DARK_PALETTE
+        }
+    })
+}
+
+/// Detect a light terminal background. Uses `terminal-light`, which first
+/// checks the COLORFGBG env var (rxvt, konsole, terminator, gnome-terminal)
+/// and then falls back to an OSC 11 query (Apple Terminal, iTerm2, Alacritty,
+/// kitty, xterm). Returns false on non-terminals or when detection fails.
+fn detect_light_background() -> bool {
+    terminal_light::luma().map(|l| l > 0.5).unwrap_or(false)
+}
+
+pub fn border(s: &str) -> String {
+    let c = palette().border;
+    s.truecolor(c.0, c.1, c.2).to_string()
+}
+pub fn text(s: &str) -> String {
+    let c = palette().text;
+    s.truecolor(c.0, c.1, c.2).to_string()
+}
+pub fn text_bold(s: &str) -> String {
+    let c = palette().text;
+    s.truecolor(c.0, c.1, c.2).bold().to_string()
+}
+pub fn muted(s: &str) -> String {
+    let c = palette().muted;
+    s.truecolor(c.0, c.1, c.2).to_string()
+}
+pub fn success(s: &str) -> String {
+    let c = palette().success;
+    s.truecolor(c.0, c.1, c.2).to_string()
+}
+pub fn success_bold(s: &str) -> String {
+    let c = palette().success;
+    s.truecolor(c.0, c.1, c.2).bold().to_string()
+}
+pub fn warning(s: &str) -> String {
+    let c = palette().warning;
+    s.truecolor(c.0, c.1, c.2).to_string()
+}
+pub fn warning_bold(s: &str) -> String {
+    let c = palette().warning;
+    s.truecolor(c.0, c.1, c.2).bold().to_string()
+}
+pub fn danger(s: &str) -> String {
+    let c = palette().danger;
+    s.truecolor(c.0, c.1, c.2).to_string()
+}
+pub fn danger_bold(s: &str) -> String {
+    let c = palette().danger;
+    s.truecolor(c.0, c.1, c.2).bold().to_string()
+}
+pub fn info(s: &str) -> String {
+    let c = palette().info;
+    s.truecolor(c.0, c.1, c.2).to_string()
+}
+pub fn accent(s: &str) -> String {
+    let c = palette().accent;
+    s.truecolor(c.0, c.1, c.2).to_string()
+}
+pub fn accent_bold(s: &str) -> String {
+    let c = palette().accent;
+    s.truecolor(c.0, c.1, c.2).bold().to_string()
+}
+
+/// 20-stop red → yellow → green gradient. Returns the RGB for bucket `idx`
+/// out of `total` positions, using the active theme's gradient stops.
+fn gradient_rgb(idx: usize, total: usize) -> (u8, u8, u8) {
+    let stops = &palette().gradient;
     let n = total.max(1);
-    let bucket = (idx * STOPS.len()) / n;
-    STOPS[bucket.min(STOPS.len() - 1)]
+    let bucket = (idx * stops.len()) / n;
+    stops[bucket.min(stops.len() - 1)]
 }
 
 pub fn gradient(s: &str, idx: usize, total: usize) -> String {

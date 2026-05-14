@@ -14,10 +14,15 @@ async fn main() {
 
 async fn run() -> Result<()> {
     let cli = cli::Cli::parse();
+    panel::init_theme(cli.theme.into());
     let token = support::github::resolve_token()?;
     let client = support::github::Client::new(token)?;
 
-    let cli::Cli { account, verbose } = cli;
+    let cli::Cli {
+        account,
+        verbose,
+        theme: _,
+    } = cli;
 
     if let Some((owner, repo)) = account.split_once('/') {
         if owner.is_empty() || repo.is_empty() || repo.contains('/') {
