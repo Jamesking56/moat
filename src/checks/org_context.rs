@@ -384,18 +384,89 @@ struct RulesetSummary {
 #[derive(Deserialize)]
 struct RulesetDetail {
     #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    conditions: Option<RulesetConditions>,
+    #[serde(default)]
     rules: Vec<RulesetRule>,
     #[serde(default)]
-    bypass_actors: Vec<serde::de::IgnoredAny>,
+    bypass_actors: Vec<BypassActor>,
+}
+
+#[derive(Deserialize, Default)]
+struct RulesetConditions {
+    #[serde(default)]
+    ref_name: Option<RefPattern>,
+    #[serde(default)]
+    repository_name: Option<RefPattern>,
+    #[serde(default)]
+    repository_id: Option<RepositoryIdCondition>,
+}
+
+#[derive(Deserialize, Default)]
+struct RefPattern {
+    #[serde(default)]
+    include: Vec<String>,
+    #[serde(default)]
+    exclude: Vec<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct RepositoryIdCondition {
+    #[serde(default)]
+    repository_ids: Vec<u64>,
 }
 
 #[derive(Deserialize)]
 struct RulesetRule {
     #[serde(rename = "type")]
     rule_type: String,
+    #[serde(default)]
+    parameters: Option<RuleParameters>,
 }
 
-async fn fetch_org_rulesets(client: &impl GitHubClient, org: &str) -> Result<OrgRulesets> {
+#[derive(Deserialize, Default)]
+struct RuleParameters {
+    #[serde(default)]
+    required_approving_review_count: Option<u32>,
+}
+
+#[derive(Deserialize)]
+struct BypassActor {
+    #[serde(default)]
+    bypass_mode: Option<String>,
+}
+
+fn targets_all_repos(conditions: Option<&RulesetConditions>) -> bool {
+    let Some(c) = conditions else {
+        return false;
+    };
+    if c.repository_id
+        .as_ref()
+        .is_some_and(|r| !r.repository_ids.is_empty())
+    {
+        return false;
+    }
+    let Some(name) = c.repository_name.as_ref() else {
+        return false;
+    };
+    name.exclude.is_empty() && name.include.iter().any(|p| p == "~ALL")
+}
+
+fn targets_default_or_all_branches(conditions: Option<&RulesetConditions>) -> bool {
+    let Some(c) = conditions else {
+        return false;
+    };
+    let Some(r) = c.ref_name.as_ref() else {
+        return false;
+    };
+    r.exclude.is_empty()
+        && r.include
+            .iter()
+            .any(|p| p == "~ALL" || p == "~DEFAULT_BRANCH")
+}
+
+pub async fn fetch_org_rulesets(client: &impl GitHubClient, org: &str) -> Result<OrgRulesets> {
     let summaries: Vec<RulesetSummary> = match client
         .get_paginated::<RulesetSummary>(&format!("/orgs/{org}/rulesets"))
         .await?
@@ -431,14 +502,35 @@ async fn fetch_org_rulesets(client: &impl GitHubClient, org: &str) -> Result<Org
 
     let mut out = OrgRulesets::empty(RulesetsState::Loaded);
     for detail in details {
+        // Only branch rulesets contribute to branch-protection booleans.
+        if detail.target.as_deref().unwrap_or("branch") != "branch" {
+            continue;
+        }
+        let all_repos = targets_all_repos(detail.conditions.as_ref());
+        let default_or_all_branches = targets_default_or_all_branches(detail.conditions.as_ref());
+        // The ruleset must reach every repo's default/release branches before
+        // its rules can be claimed as org-wide protection.
+        if !(all_repos && default_or_all_branches) {
+            continue;
+        }
+
         out.any_active = true;
-        if !detail.bypass_actors.is_empty() {
+        if detail.bypass_actors.iter().any(|a| a.bypass_mode.is_some()) {
             out.has_bypass_actors = true;
         }
         for rule in detail.rules {
             match rule.rule_type.as_str() {
                 "required_signatures" => out.required_signatures = true,
-                "pull_request" => out.pull_request = true,
+                "pull_request" => {
+                    let count = rule
+                        .parameters
+                        .as_ref()
+                        .and_then(|p| p.required_approving_review_count)
+                        .unwrap_or(0);
+                    if count >= 1 {
+                        out.pull_request = true;
+                    }
+                }
                 "required_linear_history" => out.required_linear_history = true,
                 "non_fast_forward" => out.non_fast_forward = true,
                 "deletion" => out.deletion = true,
