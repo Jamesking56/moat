@@ -132,6 +132,33 @@ async fn run_repo_checks_completes_against_fake_client() {
 }
 
 #[tokio::test]
+async fn invalid_moat_toml_aborts_the_run() {
+    let client = stub_org("acme").with_raw(
+        "/repos/acme/demo/contents/moat.toml",
+        "[checks]\nnot_a_real_check = \"off\"\n",
+    );
+    let err = match runner::fetch_repo_contexts(&client, "acme", AccountKind::Organization).await {
+        Ok(_) => panic!("expected fetch_repo_contexts to fail on invalid moat.toml"),
+        Err(e) => e,
+    };
+    let msg = format!("{err:#}");
+    assert!(msg.contains("invalid moat.toml"), "got: {msg}");
+    assert!(msg.contains("acme/demo"), "got: {msg}");
+    assert!(msg.contains("unknown check"), "got: {msg}");
+}
+
+#[tokio::test]
+async fn missing_moat_toml_continues_with_defaults() {
+    // stub_org does not stub the moat.toml endpoint, so get_raw returns NotFound
+    // and the run should proceed normally.
+    let client = stub_org("acme");
+    let contexts = runner::fetch_repo_contexts(&client, "acme", AccountKind::Organization)
+        .await
+        .unwrap();
+    assert_eq!(contexts.len(), 1);
+}
+
+#[tokio::test]
 async fn user_account_repo_checks_with_empty_listing() {
     let client = FakeGitHubClient::new()
         .with_json("/users/nuno", json!({ "type": "User" }))

@@ -1,5 +1,5 @@
 use crate::checks::common::{self, CollaboratorEntry};
-use crate::config::Config;
+use crate::config::{Config, InvalidConfigError};
 use crate::support::github::{Fetch, Fetch403, GitHubClient};
 use crate::support::outcome::CheckOutcome;
 use crate::support::workflows::{self, WorkflowsState};
@@ -787,7 +787,15 @@ async fn fetch_config(client: &impl GitHubClient, org: &str, repo: &str) -> Resu
         ))
         .await?
     {
-        Fetch::Ok(text) => Config::parse(&text),
+        Fetch::Ok(text) => {
+            let known = crate::checks::known_check_ids();
+            Config::parse(&text, &known).map_err(|source| {
+                anyhow::Error::new(InvalidConfigError {
+                    org_repo: format!("{org}/{repo}"),
+                    source,
+                })
+            })
+        }
         Fetch::NotFound | Fetch::Forbidden => Ok(Config::default()),
     }
 }

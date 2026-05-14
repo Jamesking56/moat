@@ -1,8 +1,35 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::fmt;
 
 pub const FILE_NAME: &str = "moat.toml";
+
+/// A fatal error indicating that a repository's `moat.toml` is invalid.
+///
+/// Surfaces through `anyhow::Error` so the runner can downcast and abort the
+/// whole run instead of skipping the offending repo.
+#[derive(Debug)]
+pub struct InvalidConfigError {
+    pub org_repo: String,
+    pub source: anyhow::Error,
+}
+
+impl fmt::Display for InvalidConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid moat.toml in {}: {:#}",
+            self.org_repo, self.source
+        )
+    }
+}
+
+impl std::error::Error for InvalidConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
 
 #[derive(Debug, Default, Clone)]
 pub struct Config {
@@ -25,10 +52,13 @@ struct RawConfig {
 }
 
 impl Config {
-    pub fn parse(text: &str) -> Result<Self> {
+    pub fn parse(text: &str, known_check_ids: &[&str]) -> Result<Self> {
         let raw: RawConfig = toml::from_str(text).context("invalid moat.toml")?;
         let mut checks = HashMap::with_capacity(raw.checks.len());
         for (id, value) in raw.checks {
+            if !known_check_ids.iter().any(|known| *known == id) {
+                anyhow::bail!("unknown check `{id}` in moat.toml");
+            }
             let state = match value.as_str() {
                 "on" => CheckState::On,
                 "off" => CheckState::Off,
@@ -57,6 +87,11 @@ impl Config {
 mod tests {
     use super::*;
 
+    const KNOWN: &[&str] = &[
+        "repositories_commits_are_signed",
+        "repositories_workflow_actions_are_pinned",
+    ];
+
     #[test]
     fn parses_off_and_on() {
         let cfg = Config::parse(
@@ -65,6 +100,7 @@ mod tests {
                 repositories_commits_are_signed = "off"
                 repositories_workflow_actions_are_pinned = "on"
             "#,
+            KNOWN,
         )
         .unwrap();
         assert!(cfg.is_off("repositories_commits_are_signed"));
@@ -73,7 +109,7 @@ mod tests {
 
     #[test]
     fn empty_config_is_valid() {
-        let cfg = Config::parse("").unwrap();
+        let cfg = Config::parse("", KNOWN).unwrap();
         assert!(!cfg.is_off("anything"));
     }
 
@@ -84,13 +120,27 @@ mod tests {
                 [checks]
                 repositories_commits_are_signed = "warning"
             "#,
+            KNOWN,
         )
         .unwrap_err();
         assert!(err.to_string().contains("invalid value"));
     }
 
     #[test]
+    fn rejects_unknown_check_id() {
+        let err = Config::parse(
+            r#"
+                [checks]
+                does_not_exist = "off"
+            "#,
+            KNOWN,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("unknown check"));
+    }
+
+    #[test]
     fn rejects_invalid_toml() {
-        assert!(Config::parse("not = valid = toml").is_err());
+        assert!(Config::parse("not = valid = toml", KNOWN).is_err());
     }
 }

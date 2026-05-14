@@ -81,6 +81,10 @@ fn public_only(r: &RepoContext) -> bool {
     !r.private
 }
 
+pub fn known_check_ids() -> Vec<&'static str> {
+    CHECKS.iter().map(|c| c.id).collect()
+}
+
 pub static CHECKS: &[Check] = &[
     // ----- Org-only -----
     Check {

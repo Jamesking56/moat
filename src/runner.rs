@@ -1,6 +1,7 @@
 use crate::checks::org_context::{MemberList, OrgContext};
 use crate::checks::repo_context::{RepoContext, RepoListing};
 use crate::checks::{CHECKS, Check, Scope};
+use crate::config::InvalidConfigError;
 use crate::support::github::{Fetch, GitHubClient};
 use crate::support::outcome::Status;
 use crate::support::panel;
@@ -193,20 +194,22 @@ async fn fetch_contexts(
     let total = listings.len();
     panel::progress(&format!("scanning {total} repositories"));
 
-    let mut contexts: Vec<RepoContext> = stream::iter(listings)
+    let mut stream = stream::iter(listings)
         .map(|listing| async move { RepoContext::fetch(client, account, listing).await })
-        .buffer_unordered(CONCURRENCY)
-        .filter_map(|r| async move {
-            match r {
-                Ok(c) => Some(c),
-                Err(e) => {
-                    eprintln!("  {} {e}", "!".red());
-                    None
+        .buffer_unordered(CONCURRENCY);
+
+    let mut contexts: Vec<RepoContext> = Vec::new();
+    while let Some(r) = stream.next().await {
+        match r {
+            Ok(c) => contexts.push(c),
+            Err(e) => {
+                if e.is::<InvalidConfigError>() {
+                    return Err(e);
                 }
+                eprintln!("  {} {e}", "!".red());
             }
-        })
-        .collect()
-        .await;
+        }
+    }
 
     contexts.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(contexts)
