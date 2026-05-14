@@ -4,21 +4,21 @@ use crate::checks::org_context::{OrgContext, RulesetsState};
 use crate::checks::repo_context::{BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "repositories branch protection applies to admins";
+pub const LABEL: &str = "Repositories branch protection applies to admins";
 pub const HOW_TO_FIX: &str = "GitHub → organization (or repository) → settings → rules → edit the ruleset for your release branches → under \"Bypass list\", remove every role/team/user.";
-pub const WHY_ENABLE: &str = "if admins can bypass the ruleset, a single compromised admin token is enough to push unsigned or unreviewed code straight to a release branch — the rule becomes advisory.";
+pub const WHY_ENABLE: &str = "If admins can bypass the ruleset, a single compromised admin token is enough to push unsigned or unreviewed code straight to a release branch — the rule becomes advisory.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     if ctx.rulesets.state == RulesetsState::NoPermission {
         return CheckOutcome::skipped("?");
     }
     if !ctx.rulesets.any_active {
-        return CheckOutcome::fail("no active org-level rulesets");
+        return CheckOutcome::fail("No active org-level rulesets");
     }
     if ctx.rulesets.has_bypass_actors {
-        CheckOutcome::fail("bypass actors configured on org-level rulesets")
+        CheckOutcome::fail("Bypass actors configured on org-level rulesets")
     } else {
-        CheckOutcome::pass("enforced for everyone (no bypass actors)")
+        CheckOutcome::pass("Enforced for everyone (no bypass actors)")
     }
 }
 

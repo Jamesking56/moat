@@ -4,17 +4,17 @@ use crate::checks::org_context::OrgContext;
 use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "repositories webhooks are secure";
+pub const LABEL: &str = "Repositories webhooks are secure";
 pub const HOW_TO_FIX: &str = "GitHub → repository (or organization) → settings → webhooks → edit each webhook → set \"Payload URL\" to an `https://` endpoint, set a \"Secret\", and verify signatures on the receiver.";
-pub const WHY_ENABLE: &str = "plain-HTTP hooks leak payloads (and any secrets inside them) to any network on the path, and a hook without a shared secret has no way to prove the request actually came from GitHub.";
+pub const WHY_ENABLE: &str = "Plain-HTTP hooks leak payloads (and any secrets inside them) to any network on the path, and a hook without a shared secret has no way to prove the request actually came from GitHub.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     let hooks = match &ctx.webhooks {
         WebhooksState::Ok(v) => v,
-        WebhooksState::NoPermission => return CheckOutcome::skipped("unknown"),
+        WebhooksState::NoPermission => return CheckOutcome::skipped("Unknown"),
     };
     if hooks.is_empty() {
-        return CheckOutcome::pass("no organization webhooks configured");
+        return CheckOutcome::pass("No organization webhooks configured");
     }
     let mut findings: Vec<String> = Vec::new();
     for h in hooks {
@@ -31,9 +31,9 @@ pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
         }
     }
     if findings.is_empty() {
-        CheckOutcome::pass("all organization webhooks use HTTPS and have a secret")
+        CheckOutcome::pass("All organization webhooks use HTTPS and have a secret")
     } else {
-        CheckOutcome::fail("one or more organization webhooks are insecure").with_items(findings)
+        CheckOutcome::fail("One or more organization webhooks are insecure").with_items(findings)
     }
 }
 

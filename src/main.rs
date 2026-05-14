@@ -9,7 +9,7 @@ async fn main() {
     match run().await {
         Ok(code) => std::process::exit(code),
         Err(e) => {
-            eprintln!("{} {e}", panel::danger_bold("error:"));
+            eprintln!("{} {e}", panel::danger_bold("Error:"));
             std::process::exit(1);
         }
     }
@@ -29,13 +29,13 @@ async fn run() -> Result<i32> {
 
     if let Some((owner, repo)) = account.split_once('/') {
         if owner.is_empty() || repo.is_empty() || repo.contains('/') {
-            anyhow::bail!("invalid target `{account}` — expected `owner/repo` or `account`");
+            anyhow::bail!("Invalid target `{account}` — expected `owner/repo` or `account`");
         }
         let listing = runner::ensure_viewer_can_audit_repo(&client, owner, repo).await?;
         runner::print_repo_header(owner, repo);
         support::panel::bump_progress_total(1 + runner::REPO_TICKS);
         let contexts = runner::fetch_single_repo_context(&client, owner, listing).await?;
-        support::panel::finish_progress("repository");
+        support::panel::finish_progress("Repository");
 
         let ctx = CheckContext {
             org: None,
@@ -69,8 +69,8 @@ async fn run() -> Result<i32> {
         let repo_contexts = runner::fetch_repo_contexts_from(&client, &account, listings).await?;
 
         support::panel::finish_progress(match kind {
-            AccountKind::Organization => "organization",
-            AccountKind::User => "user",
+            AccountKind::Organization => "Organization",
+            AccountKind::User => "User",
         });
 
         let ctx = CheckContext {

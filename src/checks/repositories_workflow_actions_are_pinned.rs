@@ -4,9 +4,9 @@ use crate::checks::repo_context::{RepoContext, SHAPinningState};
 use crate::support::outcome::CheckOutcome;
 use crate::support::workflows::{self, WorkflowsState};
 
-pub const LABEL: &str = "repositories workflow actions are pinned";
+pub const LABEL: &str = "Repositories workflow actions are pinned";
 pub const HOW_TO_FIX: &str = "GitHub → repository → settings → actions → general → under \"Actions permissions\", tick \"Require actions to be pinned to a full-length commit SHA\" → Save (this enforces SHA pins on future workflows); then, in every existing workflow file, replace `uses: org/action@v1` with `uses: org/action@<40-char-SHA>  # v1` — let dependabot keep them current.";
-pub const WHY_ENABLE: &str = "tags and branches are mutable — when tj-actions/changed-files was compromised in 2025 the attacker repointed the existing tags, so every workflow `@v1` instantly ran malicious code; SHA pins make that impossible, and the repo-level \"Require actions to be pinned\" setting prevents anyone from re-introducing unpinned refs.";
+pub const WHY_ENABLE: &str = "Tags and branches are mutable — when tj-actions/changed-files was compromised in 2025, the attacker repointed the existing tags, so every workflow `@v1` instantly ran malicious code; SHA pins make that impossible, and the repo-level \"Require actions to be pinned\" setting prevents anyone from re-introducing unpinned refs.";
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     let enforced = matches!(ctx.sha_pinning, SHAPinningState::Enforced);
@@ -56,7 +56,7 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
         return CheckOutcome::skipped("?");
     }
     if !has_workflows {
-        return CheckOutcome::skipped("n/a (no workflows)");
+        return CheckOutcome::skipped("N/a (no workflows)");
     }
     CheckOutcome::pass("✓ all pinned (enforcement unknown)")
 }

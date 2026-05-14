@@ -4,16 +4,16 @@ use crate::checks::org_context::{OrgContext, RulesetsState};
 use crate::checks::repo_context::{BranchEval, BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "repositories pull requests require reviews";
+pub const LABEL: &str = "Repositories pull requests require reviews";
 pub const HOW_TO_FIX: &str = "GitHub → organization (or repository) → settings → rules → edit the ruleset for your release branches → under \"Rules\", enable \"Require a pull request before merging\" with required approvals ≥ 1, \"Dismiss stale pull request approvals when new commits are pushed\", \"Require approval of the most recent reviewable push\", and (when a CODEOWNERS file is present) \"Require review from Code Owners\".";
-pub const WHY_ENABLE: &str = "without required reviews, a single compromised contributor account can push directly to a release branch — peer review is the cheapest mechanism that catches malicious patches before they ship. Stale-review dismissal and last-push approval close the gap where an attacker amends a previously-approved PR; code-owner review ensures changes to sensitive paths are seen by the right people.";
+pub const WHY_ENABLE: &str = "Without required reviews, a single compromised contributor account can push directly to a release branch — peer review is the cheapest mechanism that catches malicious patches before they ship. Stale-review dismissal and last-push approval close the gap where an attacker amends a previously-approved PR; code-owner review ensures changes to sensitive paths are seen by the right people.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     if ctx.rulesets.state == RulesetsState::NoPermission {
         return CheckOutcome::skipped("?");
     }
     if !ctx.rulesets.pull_request {
-        return CheckOutcome::fail("not required by any org-level ruleset");
+        return CheckOutcome::fail("Not required by any org-level ruleset");
     }
     let mut missing: Vec<&str> = Vec::new();
     if !ctx.rulesets.pr_dismiss_stale_reviews {
@@ -26,7 +26,7 @@ pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
         missing.push("code-owner review not required");
     }
     if missing.is_empty() {
-        CheckOutcome::pass("required by an org-level ruleset")
+        CheckOutcome::pass("Required by an org-level ruleset")
     } else {
         CheckOutcome::fail(
             "required by an org-level ruleset, but some sub-requirements are missing",

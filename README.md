@@ -85,6 +85,10 @@ Scanning finds secrets after they reach GitHub; push protection rejects them at 
 
 Most package compromises are disclosed publicly before they are widely exploited; alerts tell you which of your repos consume the bad version so you can pin or patch within the window before mass scanning catches up.
 
+### `repositories_dependabot_security_updates_are_enabled`
+
+Alerts only tell you a vulnerable dependency is in use; security updates are what actually open the PR that bumps it. Without them, an alert sits in the dashboard until someone notices, and the window before mass scanning catches up is exactly the window you wanted to close.
+
 ### `repositories_releases_are_immutable`
 
 Without immutability, an existing tag can be moved or its assets replaced after the fact; downstream consumers pinned to a version they audited will silently fetch different bytes the next time they install.
@@ -131,7 +135,7 @@ Without a private intake, researchers either drop a public issue (advertising th
 
 ### `repositories_workflow_actions_are_pinned`
 
-Tags and branches are mutable — when `tj-actions/changed-files` was compromised in 2025 the attacker repointed the existing tags, so every workflow `@v1` instantly ran malicious code; SHA pins make that impossible.
+Tags and branches are mutable — when `tj-actions/changed-files` was compromised in 2025, the attacker repointed the existing tags, so every workflow `@v1` instantly ran malicious code; SHA pins make that impossible.
 
 ### `repositories_pull_request_target_is_safe`
 
@@ -147,7 +151,7 @@ Without a disclosure channel, well-meaning researchers file public issues with f
 
 ### `repositories_have_dependabot_config`
 
-Pinning actions to SHAs is only safe if something keeps them up to date; without dependabot the pins rot and either get bumped to a tag (defeating the pin) or stay stuck on a known-vulnerable revision.
+Pinning actions to SHAs is only safe if something keeps them up to date; without Dependabot the pins rot and either get bumped to a tag (defeating the pin) or stay stuck on a known-vulnerable revision.
 
 ## Configuration
 

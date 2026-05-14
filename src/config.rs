@@ -19,7 +19,7 @@ impl fmt::Display for InvalidConfigError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "invalid moat.toml in {}: {:#}",
+            "Invalid moat.toml in {}: {:#}",
             self.org_repo, self.source
         )
     }
@@ -53,17 +53,17 @@ struct RawConfig {
 
 impl Config {
     pub fn parse(text: &str, known_check_ids: &[&str]) -> Result<Self> {
-        let raw: RawConfig = toml::from_str(text).context("invalid moat.toml")?;
+        let raw: RawConfig = toml::from_str(text).context("Invalid moat.toml")?;
         let mut checks = HashMap::with_capacity(raw.checks.len());
         for (id, value) in raw.checks {
             if !known_check_ids.iter().any(|known| *known == id) {
-                anyhow::bail!("unknown check `{id}` in moat.toml");
+                anyhow::bail!("Unknown check `{id}` in moat.toml");
             }
             let state = match value.as_str() {
                 "on" => CheckState::On,
                 "off" => CheckState::Off,
                 other => anyhow::bail!(
-                    "invalid value `{other}` for check `{id}` in moat.toml — expected `on` or `off`"
+                    "Invalid value `{other}` for check `{id}` in moat.toml — expected `on` or `off`"
                 ),
             };
             checks.insert(id, state);
@@ -123,7 +123,7 @@ mod tests {
             KNOWN,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("invalid value"));
+        assert!(err.to_string().contains("Invalid value"));
     }
 
     #[test]
@@ -136,7 +136,7 @@ mod tests {
             KNOWN,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("unknown check"));
+        assert!(err.to_string().contains("Unknown check"));
     }
 
     #[test]

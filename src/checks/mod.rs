@@ -11,6 +11,7 @@ pub mod repositories_commits_are_signed;
 pub mod repositories_default_branch_has_linear_history;
 pub mod repositories_default_branch_is_locked;
 pub mod repositories_dependabot_alerts_are_enabled;
+pub mod repositories_dependabot_security_updates_are_enabled;
 pub mod repositories_fork_pull_requests_require_approval;
 pub mod repositories_have_dependabot_config;
 pub mod repositories_have_no_direct_collaborators;
@@ -70,9 +71,9 @@ impl Check {
     /// The label to use for the applicable-repo subset in summaries.
     pub fn repo_noun(&self) -> &'static str {
         if self.applies_to_repo.is_some() {
-            "public repos"
+            "public repositories"
         } else {
-            "repos"
+            "repositories"
         }
     }
 }
@@ -156,6 +157,16 @@ pub static CHECKS: &[Check] = &[
         org_eval: Some(repositories_dependabot_alerts_are_enabled::org_check),
         repo_eval: Some(repositories_dependabot_alerts_are_enabled::repo_check),
         state_note: repositories_dependabot_alerts_are_enabled::state_note,
+        applies_to_repo: None,
+    },
+    Check {
+        id: "repositories_dependabot_security_updates_are_enabled",
+        label: repositories_dependabot_security_updates_are_enabled::LABEL,
+        how_to_fix: repositories_dependabot_security_updates_are_enabled::HOW_TO_FIX,
+        why_enable: repositories_dependabot_security_updates_are_enabled::WHY_ENABLE,
+        org_eval: Some(repositories_dependabot_security_updates_are_enabled::org_check),
+        repo_eval: Some(repositories_dependabot_security_updates_are_enabled::repo_check),
+        state_note: repositories_dependabot_security_updates_are_enabled::state_note,
         applies_to_repo: None,
     },
     Check {

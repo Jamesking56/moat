@@ -765,7 +765,7 @@ version = "0.53.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.winnow]]
-version = "1.0.2"
+version = "1.0.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.wiremock]]

@@ -43,6 +43,7 @@ pub struct RepoContext {
     pub secret_scanning: FeatureState,
     pub push_protection: FeatureState,
     pub dependabot_alerts: FeatureState,
+    pub dependabot_security_updates: FeatureState,
     pub private_vulnerability_reporting: FeatureState,
     pub workflows: WorkflowsState,
     pub security_md: FilePresence,
@@ -150,7 +151,7 @@ impl BranchProtections {
         } else if any_pass {
             CheckOutcome::pass("✓")
         } else if any_plan_gated {
-            CheckOutcome::skipped("n/a (plan)")
+            CheckOutcome::skipped("N/a (plan)")
         } else if any_unknown {
             CheckOutcome::skipped("?")
         } else {
@@ -273,6 +274,7 @@ impl RepoContext {
                 secret_scanning: FeatureState::Unknown,
                 push_protection: FeatureState::Unknown,
                 dependabot_alerts: FeatureState::Unknown,
+                dependabot_security_updates: FeatureState::Unknown,
                 private_vulnerability_reporting: FeatureState::Unknown,
                 workflows: WorkflowsState::Loaded(Vec::new()),
                 security_md: FilePresence::Unknown,
@@ -308,6 +310,7 @@ impl RepoContext {
             branches,
             workflow_token,
             dependabot_alerts,
+            dependabot_security_updates,
             private_vulnerability_reporting,
             workflows,
             security_md,
@@ -333,6 +336,11 @@ impl RepoContext {
                 &repo.name,
                 "dependabot alerts",
                 fetch_dependabot_alerts(client, org, &repo.name),
+            ),
+            traced(
+                &repo.name,
+                "dependabot security updates",
+                fetch_dependabot_security_updates(client, org, &repo.name),
             ),
             traced(
                 &repo.name,
@@ -403,6 +411,7 @@ impl RepoContext {
             secret_scanning,
             push_protection,
             dependabot_alerts,
+            dependabot_security_updates,
             private_vulnerability_reporting,
             workflows,
             security_md,
@@ -731,6 +740,31 @@ async fn fetch_dependabot_alerts(
             .await?
         {
             Fetch::Ok(_) => FeatureState::Enabled,
+            Fetch::NotFound => FeatureState::Disabled,
+            Fetch::Forbidden => FeatureState::Unknown,
+        },
+    )
+}
+
+#[derive(Deserialize)]
+struct AutomatedSecurityFixes {
+    enabled: bool,
+}
+
+async fn fetch_dependabot_security_updates(
+    client: &impl GitHubClient,
+    org: &str,
+    repo: &str,
+) -> Result<FeatureState> {
+    Ok(
+        match client
+            .get_json::<AutomatedSecurityFixes>(&format!(
+                "/repos/{org}/{repo}/automated-security-fixes"
+            ))
+            .await?
+        {
+            Fetch::Ok(r) if r.enabled => FeatureState::Enabled,
+            Fetch::Ok(_) => FeatureState::Disabled,
             Fetch::NotFound => FeatureState::Disabled,
             Fetch::Forbidden => FeatureState::Unknown,
         },

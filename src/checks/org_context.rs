@@ -30,6 +30,7 @@ pub struct OrgContext {
     pub secret_scanning_default: FeatureDefaultState,
     pub push_protection_default: FeatureDefaultState,
     pub dependabot_alerts_default: FeatureDefaultState,
+    pub dependabot_security_updates_default: FeatureDefaultState,
     pub webhooks: WebhooksState,
     pub private_vulnerability_reporting: FeatureState,
     pub rulesets: OrgRulesets,
@@ -84,10 +85,10 @@ pub enum FeatureDefaultState {
 impl FeatureDefaultState {
     pub fn to_outcome(&self, unknown_label: &str) -> CheckOutcome {
         match self {
-            Self::Enabled => CheckOutcome::pass("enabled by default for new repositories"),
-            Self::Disabled => CheckOutcome::fail("disabled by default for new repositories"),
+            Self::Enabled => CheckOutcome::pass("Enabled by default for new repositories"),
+            Self::Disabled => CheckOutcome::fail("Disabled by default for new repositories"),
             Self::NotSet => {
-                CheckOutcome::warn("no default security configuration set for new repositories")
+                CheckOutcome::warn("No default security configuration set for new repositories")
             }
             Self::Unknown => CheckOutcome::skipped(unknown_label),
         }
@@ -178,6 +179,7 @@ struct SecurityConfigInner {
     secret_scanning: Option<String>,
     secret_scanning_push_protection: Option<String>,
     dependabot_alerts: Option<String>,
+    dependabot_security_updates: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -305,36 +307,43 @@ impl OrgContext {
             _ => WorkflowTokenState::Unavailable,
         };
 
-        let (secret_scanning_default, push_protection_default, dependabot_alerts_default) =
-            match sec_defaults_resp {
-                Fetch::Ok(defaults) => {
-                    let chosen = defaults
-                        .into_iter()
-                        .find(|d| {
-                            d.default_for_new_repos
-                                .as_deref()
-                                .is_some_and(|v| v != "none")
-                        })
-                        .and_then(|d| d.configuration);
-                    match chosen {
-                        Some(c) => (
-                            feature_default(c.secret_scanning.as_deref()),
-                            feature_default(c.secret_scanning_push_protection.as_deref()),
-                            feature_default(c.dependabot_alerts.as_deref()),
-                        ),
-                        None => (
-                            FeatureDefaultState::NotSet,
-                            FeatureDefaultState::NotSet,
-                            FeatureDefaultState::NotSet,
-                        ),
-                    }
+        let (
+            secret_scanning_default,
+            push_protection_default,
+            dependabot_alerts_default,
+            dependabot_security_updates_default,
+        ) = match sec_defaults_resp {
+            Fetch::Ok(defaults) => {
+                let chosen = defaults
+                    .into_iter()
+                    .find(|d| {
+                        d.default_for_new_repos
+                            .as_deref()
+                            .is_some_and(|v| v != "none")
+                    })
+                    .and_then(|d| d.configuration);
+                match chosen {
+                    Some(c) => (
+                        feature_default(c.secret_scanning.as_deref()),
+                        feature_default(c.secret_scanning_push_protection.as_deref()),
+                        feature_default(c.dependabot_alerts.as_deref()),
+                        feature_default(c.dependabot_security_updates.as_deref()),
+                    ),
+                    None => (
+                        FeatureDefaultState::NotSet,
+                        FeatureDefaultState::NotSet,
+                        FeatureDefaultState::NotSet,
+                        FeatureDefaultState::NotSet,
+                    ),
                 }
-                _ => (
-                    FeatureDefaultState::Unknown,
-                    FeatureDefaultState::Unknown,
-                    FeatureDefaultState::Unknown,
-                ),
-            };
+            }
+            _ => (
+                FeatureDefaultState::Unknown,
+                FeatureDefaultState::Unknown,
+                FeatureDefaultState::Unknown,
+                FeatureDefaultState::Unknown,
+            ),
+        };
 
         Ok(Self {
             two_factor_required,
@@ -348,6 +357,7 @@ impl OrgContext {
             secret_scanning_default,
             push_protection_default,
             dependabot_alerts_default,
+            dependabot_security_updates_default,
             webhooks,
             private_vulnerability_reporting,
             rulesets,

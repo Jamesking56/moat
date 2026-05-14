@@ -4,18 +4,18 @@ use crate::checks::org_context::{OrgContext, RulesetsState};
 use crate::checks::repo_context::{BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "repositories commits are signed";
+pub const LABEL: &str = "Repositories commits are signed";
 pub const HOW_TO_FIX: &str = "GitHub → organization (or repository) → settings → rules → edit the ruleset for your release branches → under \"Rules\", enable \"Require signed commits\".";
-pub const WHY_ENABLE: &str = "a stolen developer token can push commits authored as anyone; requiring a verified signature ties each commit to a key the attacker doesn't have, turning a leaked token from a code-push into a noisy failure.";
+pub const WHY_ENABLE: &str = "A stolen developer token can push commits authored as anyone; requiring a verified signature ties each commit to a key the attacker doesn't have, turning a leaked token from a code-push into a noisy failure.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     if ctx.rulesets.state == RulesetsState::NoPermission {
         return CheckOutcome::skipped("?");
     }
     if ctx.rulesets.required_signatures {
-        CheckOutcome::pass("required by an org-level ruleset")
+        CheckOutcome::pass("Required by an org-level ruleset")
     } else {
-        CheckOutcome::fail("not required by any org-level ruleset")
+        CheckOutcome::fail("Not required by any org-level ruleset")
     }
 }
 

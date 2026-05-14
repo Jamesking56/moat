@@ -2,28 +2,28 @@ use crate::checks::StateCtx;
 use crate::checks::org_context::{DefaultRepoPermissionState, OrgContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "organization new members default to no permissions";
+pub const LABEL: &str = "Organization new members default to no permissions";
 pub const HOW_TO_FIX: &str = "GitHub → your organization → settings → member privileges → base permissions → set to \"No permission\" or \"Read\".";
-pub const WHY_ENABLE: &str = "this setting decides the blast radius of a single compromised account; with write or admin as the default, one stolen session can push to every repo at once instead of just the ones that member legitimately touches.";
+pub const WHY_ENABLE: &str = "This setting decides the blast radius of a single compromised account; with write or admin as the default, one stolen session can push to every repo at once instead of just the ones that member legitimately touches.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     match &ctx.default_repository_permission {
         DefaultRepoPermissionState::None => {
-            CheckOutcome::pass("new members get no access to repositories by default")
+            CheckOutcome::pass("New members get no access to repositories by default")
         }
         DefaultRepoPermissionState::Read => {
-            CheckOutcome::pass("new members get read access by default")
+            CheckOutcome::pass("New members get read access by default")
         }
         DefaultRepoPermissionState::Write => {
-            CheckOutcome::fail("new members get write access to every repository by default")
+            CheckOutcome::fail("New members get write access to every repository by default")
         }
         DefaultRepoPermissionState::Admin => {
-            CheckOutcome::fail("new members get admin access to every repository by default")
+            CheckOutcome::fail("New members get admin access to every repository by default")
         }
         DefaultRepoPermissionState::Other(s) => {
-            CheckOutcome::warn(format!("unrecognized default permission: {s}"))
+            CheckOutcome::warn(format!("Unrecognized default permission: {s}"))
         }
-        DefaultRepoPermissionState::Unknown => CheckOutcome::skipped("unknown"),
+        DefaultRepoPermissionState::Unknown => CheckOutcome::skipped("Unknown"),
     }
 }
 

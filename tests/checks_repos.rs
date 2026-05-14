@@ -12,6 +12,7 @@ use moat::checks::{
     repositories_default_branch_has_linear_history as linear_history,
     repositories_default_branch_is_locked as immutable_branch,
     repositories_dependabot_alerts_are_enabled as dependabot_alerts,
+    repositories_dependabot_security_updates_are_enabled as dependabot_security_updates,
     repositories_fork_pull_requests_require_approval as fork_pr_approval,
     repositories_have_dependabot_config as dependabot_config,
     repositories_have_no_direct_collaborators as direct_collaborators,
@@ -57,6 +58,7 @@ fn ctx(branch: BranchProtectionState, token: WorkflowTokenState) -> RepoContext 
         secret_scanning: FeatureState::Enabled,
         push_protection: FeatureState::Enabled,
         dependabot_alerts: FeatureState::Enabled,
+        dependabot_security_updates: FeatureState::Enabled,
         private_vulnerability_reporting: FeatureState::Enabled,
         workflows: WorkflowsState::Loaded(Vec::new()),
         security_md: FilePresence::Absent,
@@ -151,18 +153,20 @@ fn pr_reviews_repo_check_lists_missing_sub_requirements() {
     );
     let out = pr_reviews::repo_check(&c);
     assert_eq!(out.status, Status::Fail);
-    assert!(
-        out.items
-            .iter()
-            .any(|i| i.contains("stale reviews not dismissed"))
-    );
-    assert!(
-        out.items
-            .iter()
-            .any(|i| i.contains("last-push approval not required"))
-    );
+    assert!(out.items.iter().any(|i| {
+        i.to_ascii_lowercase()
+            .contains("stale reviews not dismissed")
+    }));
+    assert!(out.items.iter().any(|i| {
+        i.to_ascii_lowercase()
+            .contains("last-push approval not required")
+    }));
     // CODEOWNERS absent → code-owner-review failure must be suppressed.
-    assert!(!out.items.iter().any(|i| i.contains("code-owner review")));
+    assert!(
+        !out.items
+            .iter()
+            .any(|i| i.to_ascii_lowercase().contains("code-owner review"))
+    );
 }
 
 #[test]
@@ -175,7 +179,11 @@ fn pr_reviews_repo_check_requires_code_owner_review_when_codeowners_present() {
     let out = pr_reviews::repo_check(&c);
     assert_eq!(out.status, Status::Fail);
     assert_eq!(out.items.len(), 1);
-    assert!(out.items[0].contains("code-owner review not required"));
+    assert!(
+        out.items[0]
+            .to_ascii_lowercase()
+            .contains("code-owner review not required")
+    );
 }
 
 #[test]
@@ -237,6 +245,29 @@ fn feature_state_outcomes_cover_all_variants() {
     assert_eq!(dependabot_alerts::repo_check(&c).status, Status::Skipped);
 }
 
+#[test]
+fn dependabot_security_updates_repo_check_maps_feature_states() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+
+    c.dependabot_security_updates = FeatureState::Enabled;
+    assert_eq!(
+        dependabot_security_updates::repo_check(&c).status,
+        Status::Pass
+    );
+
+    c.dependabot_security_updates = FeatureState::Disabled;
+    assert_eq!(
+        dependabot_security_updates::repo_check(&c).status,
+        Status::Fail
+    );
+
+    c.dependabot_security_updates = FeatureState::Unknown;
+    assert_eq!(
+        dependabot_security_updates::repo_check(&c).status,
+        Status::Skipped
+    );
+}
+
 fn listing(default_branch: Option<&str>, sa: Option<SecurityAndAnalysis>) -> RepoListing {
     RepoListing {
         name: "demo".into(),
@@ -263,7 +294,11 @@ async fn repo_context_fetch_happy_path() {
             "/repos/acme/demo/actions/permissions/workflow",
             json!({ "default_workflow_permissions": "read" }),
         )
-        .with_status("/repos/acme/demo/vulnerability-alerts", 204);
+        .with_status("/repos/acme/demo/vulnerability-alerts", 204)
+        .with_json(
+            "/repos/acme/demo/automated-security-fixes",
+            json!({ "enabled": true, "paused": false }),
+        );
 
     let sa = SecurityAndAnalysis {
         secret_scanning: Some(FeatureStatus {
@@ -324,7 +359,11 @@ async fn repo_context_fetch_plan_gated_private_repo_marks_scan_and_push_plan_gat
             "/repos/acme/demo/actions/permissions/workflow",
             json!({ "default_workflow_permissions": "read" }),
         )
-        .with_status("/repos/acme/demo/vulnerability-alerts", 204);
+        .with_status("/repos/acme/demo/vulnerability-alerts", 204)
+        .with_json(
+            "/repos/acme/demo/automated-security-fixes",
+            json!({ "enabled": true, "paused": false }),
+        );
 
     let sa = SecurityAndAnalysis {
         secret_scanning: Some(FeatureStatus {
@@ -460,7 +499,7 @@ fn pinned_actions_enforced_short_circuits_even_with_unpinned_refs() {
     )]);
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Pass);
-    assert!(o.summary.contains("enforced"));
+    assert!(o.summary.to_ascii_lowercase().contains("enforced"));
 }
 
 #[test]
@@ -528,7 +567,7 @@ fn pinned_actions_no_workflows_unknown_enforcement_is_skipped() {
     c.workflows = WorkflowsState::Loaded(Vec::new());
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Skipped);
-    assert!(o.summary.contains("no workflows"));
+    assert!(o.summary.to_ascii_lowercase().contains("no workflows"));
 }
 
 #[test]
@@ -541,7 +580,11 @@ fn pinned_actions_all_pinned_unknown_enforcement_passes_with_caveat() {
     )]);
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Pass);
-    assert!(o.summary.contains("enforcement unknown"));
+    assert!(
+        o.summary
+            .to_ascii_lowercase()
+            .contains("enforcement unknown")
+    );
 }
 
 #[tokio::test]
@@ -591,7 +634,11 @@ fn immutable_branch_fails_when_force_pushes_allowed() {
     );
     let o = immutable_branch::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.items.iter().any(|i| i.contains("force pushes")));
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.to_ascii_lowercase().contains("force pushes"))
+    );
 }
 
 #[test]
@@ -602,7 +649,11 @@ fn immutable_branch_fails_when_deletions_allowed() {
     );
     let o = immutable_branch::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.items.iter().any(|i| i.contains("deletions")));
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.to_ascii_lowercase().contains("deletions"))
+    );
 }
 
 #[test]
@@ -660,7 +711,11 @@ fn webhooks_http_url_fails_with_not_https() {
     }]);
     let o = webhooks_secure::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.items.iter().any(|i| i.contains("not HTTPS")));
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.to_ascii_lowercase().contains("not https"))
+    );
 }
 
 #[test]
@@ -672,7 +727,11 @@ fn webhooks_no_secret_fails() {
     }]);
     let o = webhooks_secure::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.items.iter().any(|i| i.contains("no secret")));
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.to_ascii_lowercase().contains("no secret"))
+    );
 }
 
 #[test]
@@ -684,7 +743,11 @@ fn webhooks_empty_url_renders_as_unknown() {
     }]);
     let o = webhooks_secure::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.items.iter().any(|i| i.contains("<unknown>")));
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.to_ascii_lowercase().contains("<unknown>"))
+    );
 }
 
 #[test]
@@ -754,7 +817,7 @@ fn pvr_private_repo_is_skipped() {
     c.private_vulnerability_reporting = FeatureState::Disabled;
     let o = pvr::repo_check(&c);
     assert_eq!(o.status, Status::Skipped);
-    assert!(o.summary.contains("private"));
+    assert!(o.summary.to_ascii_lowercase().contains("private"));
 }
 
 #[test]
@@ -792,7 +855,11 @@ fn prt_safe_pull_request_target_with_untrusted_checkout_fails() {
     )]);
     let o = prt_safe::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.items.iter().any(|i| i.contains("danger.yml")));
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.to_ascii_lowercase().contains("danger.yml"))
+    );
 }
 
 #[test]
@@ -896,7 +963,11 @@ fn workflow_perms_missing_block_fails() {
     )]);
     let o = workflow_perms::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.items.iter().any(|i| i.contains("missing")));
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.to_ascii_lowercase().contains("missing"))
+    );
 }
 
 #[test]
@@ -908,7 +979,11 @@ fn workflow_perms_write_all_fails() {
     )]);
     let o = workflow_perms::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.items.iter().any(|i| i.contains("write-all")));
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.to_ascii_lowercase().contains("write-all"))
+    );
 }
 
 #[test]
@@ -920,7 +995,11 @@ fn workflow_perms_scoped_write_fails() {
     )]);
     let o = workflow_perms::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.items.iter().any(|i| i.contains("contents")));
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.to_ascii_lowercase().contains("contents"))
+    );
 }
 
 #[test]
@@ -945,7 +1024,8 @@ fn workflow_perms_job_level_write_all_fails() {
     assert!(
         o.items
             .iter()
-            .any(|i| i.contains("job `a`") && i.contains("write-all"))
+            .any(|i| i.to_ascii_lowercase().contains("job `a`")
+                && i.to_ascii_lowercase().contains("write-all"))
     );
 }
 
@@ -961,7 +1041,8 @@ fn workflow_perms_job_level_scoped_write_fails() {
     assert!(
         o.items
             .iter()
-            .any(|i| i.contains("job `release`") && i.contains("contents"))
+            .any(|i| i.to_ascii_lowercase().contains("job `release`")
+                && i.to_ascii_lowercase().contains("contents"))
     );
 }
 
@@ -979,11 +1060,86 @@ fn workflow_perms_job_level_read_only_passes() {
 async fn repo_context_fetch_no_default_branch() {
     let client = FakeGitHubClient::new()
         .with_forbidden("/repos/acme/demo/actions/permissions/workflow")
-        .with_forbidden("/repos/acme/demo/vulnerability-alerts");
+        .with_forbidden("/repos/acme/demo/vulnerability-alerts")
+        .with_forbidden("/repos/acme/demo/automated-security-fixes");
     let r = RepoContext::fetch(&client, "acme", listing(None, None))
         .await
         .unwrap();
     assert!(r.branch_protections.is_empty());
     assert!(matches!(r.workflow_token, WorkflowTokenState::Unavailable));
     assert!(matches!(r.dependabot_alerts, FeatureState::Unknown));
+    assert!(matches!(
+        r.dependabot_security_updates,
+        FeatureState::Unknown
+    ));
+}
+
+#[tokio::test]
+async fn dependabot_security_updates_enabled_when_endpoint_reports_true() {
+    let client = FakeGitHubClient::new()
+        .with_not_found("/repos/acme/demo/branches/main/protection")
+        .with_forbidden("/repos/acme/demo/actions/permissions/workflow")
+        .with_not_found("/repos/acme/demo/vulnerability-alerts")
+        .with_json(
+            "/repos/acme/demo/automated-security-fixes",
+            json!({ "enabled": true, "paused": false }),
+        );
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
+        .await
+        .unwrap();
+    assert!(matches!(
+        r.dependabot_security_updates,
+        FeatureState::Enabled
+    ));
+}
+
+#[tokio::test]
+async fn dependabot_security_updates_disabled_when_endpoint_reports_false() {
+    let client = FakeGitHubClient::new()
+        .with_not_found("/repos/acme/demo/branches/main/protection")
+        .with_forbidden("/repos/acme/demo/actions/permissions/workflow")
+        .with_not_found("/repos/acme/demo/vulnerability-alerts")
+        .with_json(
+            "/repos/acme/demo/automated-security-fixes",
+            json!({ "enabled": false, "paused": false }),
+        );
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
+        .await
+        .unwrap();
+    assert!(matches!(
+        r.dependabot_security_updates,
+        FeatureState::Disabled
+    ));
+}
+
+#[tokio::test]
+async fn dependabot_security_updates_disabled_when_endpoint_404() {
+    let client = FakeGitHubClient::new()
+        .with_not_found("/repos/acme/demo/branches/main/protection")
+        .with_forbidden("/repos/acme/demo/actions/permissions/workflow")
+        .with_not_found("/repos/acme/demo/vulnerability-alerts")
+        .with_not_found("/repos/acme/demo/automated-security-fixes");
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
+        .await
+        .unwrap();
+    assert!(matches!(
+        r.dependabot_security_updates,
+        FeatureState::Disabled
+    ));
+}
+
+#[tokio::test]
+async fn dependabot_security_updates_unknown_when_endpoint_forbidden() {
+    let client = FakeGitHubClient::new()
+        .with_not_found("/repos/acme/demo/branches/main/protection")
+        .with_forbidden("/repos/acme/demo/actions/permissions/workflow")
+        .with_not_found("/repos/acme/demo/vulnerability-alerts")
+        .with_forbidden("/repos/acme/demo/automated-security-fixes");
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
+        .await
+        .unwrap();
+    assert!(matches!(
+        r.dependabot_security_updates,
+        FeatureState::Unknown
+    ));
 }

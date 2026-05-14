@@ -4,9 +4,9 @@ use crate::checks::org_context::{OrgContext, RulesetsState};
 use crate::checks::repo_context::{BranchEval, BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "repositories default branch is locked";
+pub const LABEL: &str = "Repositories default branch is locked";
 pub const HOW_TO_FIX: &str = "GitHub → organization (or repository) → settings → rules → edit the ruleset for your release branches → under \"Rules\", enable both \"Block force pushes\" and \"Restrict deletions\".";
-pub const WHY_ENABLE: &str = "force pushes and branch deletions rewrite history — an attacker (or a tired maintainer) can erase the audit trail of a malicious commit or quietly replace a tagged release with a different tree.";
+pub const WHY_ENABLE: &str = "Force pushes and branch deletions rewrite history — an attacker (or a tired maintainer) can erase the audit trail of a malicious commit or quietly replace a tagged release with a different tree.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     if ctx.rulesets.state == RulesetsState::NoPermission {
@@ -20,9 +20,9 @@ pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
         missing.push("deletions allowed".into());
     }
     if missing.is_empty() {
-        CheckOutcome::pass("force pushes and deletions blocked by an org-level ruleset")
+        CheckOutcome::pass("Force pushes and deletions blocked by an org-level ruleset")
     } else {
-        CheckOutcome::fail("not fully locked at the org level").with_items(missing)
+        CheckOutcome::fail("Not fully locked at the org level").with_items(missing)
     }
 }
 

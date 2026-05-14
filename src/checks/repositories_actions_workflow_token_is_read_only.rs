@@ -4,24 +4,24 @@ use crate::checks::org_context::OrgContext;
 use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "repositories actions workflow token is read only";
+pub const LABEL: &str = "Repositories actions workflow token is read only";
 pub const HOW_TO_FIX: &str = "GitHub → your organization → settings → actions → general → under \"Workflow permissions\", select \"Read repository contents and packages permissions\" (apply the same setting per-repo at repo → settings → actions → general → workflow permissions).";
-pub const WHY_ENABLE: &str = "every workflow inherits this token by default; granting write at the org or repo level means a typo'd action reference or a hijacked third-party action can rewrite history, tags, and releases without ever needing a maintainer's credentials.";
+pub const WHY_ENABLE: &str = "Every workflow inherits this token by default; granting write at the org or repo level means a typo'd action reference or a hijacked third-party action can rewrite history, tags, and releases without ever needing a maintainer's credentials.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     match ctx.workflow_token {
-        WorkflowTokenState::Read => CheckOutcome::pass("read-only by default for new repositories"),
+        WorkflowTokenState::Read => CheckOutcome::pass("Read-only by default for new repositories"),
         WorkflowTokenState::Write => {
-            CheckOutcome::fail("read and write by default for new repositories")
+            CheckOutcome::fail("Read and write by default for new repositories")
         }
-        WorkflowTokenState::Unavailable => CheckOutcome::skipped("unknown"),
+        WorkflowTokenState::Unavailable => CheckOutcome::skipped("Unknown"),
     }
 }
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     match ctx.workflow_token {
-        WorkflowTokenState::Read => CheckOutcome::pass("read"),
-        WorkflowTokenState::Write => CheckOutcome::fail("write"),
+        WorkflowTokenState::Read => CheckOutcome::pass("Read"),
+        WorkflowTokenState::Write => CheckOutcome::fail("Write"),
         WorkflowTokenState::Unavailable => CheckOutcome::skipped("?"),
     }
 }

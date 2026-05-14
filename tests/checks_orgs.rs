@@ -11,6 +11,7 @@ use moat::checks::{
     repositories_branch_protection_applies_to_admins as admin_enforcement,
     repositories_default_branch_has_linear_history as linear_history,
     repositories_default_branch_is_locked as immutable_branch,
+    repositories_dependabot_security_updates_are_enabled as dependabot_security_updates,
     repositories_fork_pull_requests_require_approval as fork_pr_approval,
     repositories_private_vulnerability_reporting_is_enabled as pvr,
     repositories_pull_requests_require_reviews as pr_reviews_org,
@@ -39,6 +40,7 @@ fn ctx(
         secret_scanning_default: FeatureDefaultState::Enabled,
         push_protection_default: FeatureDefaultState::Enabled,
         dependabot_alerts_default: FeatureDefaultState::Enabled,
+        dependabot_security_updates_default: FeatureDefaultState::Enabled,
         webhooks: WebhooksState::Ok(Vec::new()),
         private_vulnerability_reporting: FeatureState::Enabled,
         rulesets: OrgRulesets::empty(RulesetsState::Loaded),
@@ -55,7 +57,7 @@ fn two_factor_required_passes_when_required() {
     );
     let o = two_factor_required::org_check(&c);
     assert_eq!(o.status, Status::Pass);
-    assert_eq!(o.summary, "required for every member");
+    assert_eq!(o.summary, "Required for every member");
 }
 
 #[test]
@@ -101,7 +103,7 @@ fn members_without_2fa_fails_with_items_when_present() {
     );
     let o = members_without_2fa::org_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.summary.contains('2'));
+    assert!(o.summary.to_ascii_lowercase().contains('2'));
     assert_eq!(o.items, vec!["alice", "bob"]);
 }
 
@@ -257,7 +259,7 @@ fn admin_enforcement_org_no_rulesets_fails() {
     c.rulesets = rulesets(RulesetsState::Loaded, false, false, false, false, false);
     let o = admin_enforcement::org_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.summary.contains("no active"));
+    assert!(o.summary.to_ascii_lowercase().contains("no active"));
 }
 
 #[test]
@@ -266,7 +268,7 @@ fn admin_enforcement_org_bypass_actors_fails() {
     c.rulesets = rulesets(RulesetsState::Loaded, true, false, false, false, true);
     let o = admin_enforcement::org_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.summary.contains("bypass"));
+    assert!(o.summary.to_ascii_lowercase().contains("bypass"));
 }
 
 #[test]
@@ -331,7 +333,11 @@ fn immutable_branch_org_missing_one_fails() {
     c.rulesets = rulesets(RulesetsState::Loaded, true, false, true, false, false);
     let o = immutable_branch::org_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.items.iter().any(|i| i.contains("deletions")));
+    assert!(
+        o.items
+            .iter()
+            .any(|i| i.to_ascii_lowercase().contains("deletions"))
+    );
 }
 
 #[test]
@@ -362,7 +368,8 @@ async fn org_context_fetch_aggregates_all_endpoints() {
                     "configuration": {
                         "secret_scanning": "enabled",
                         "secret_scanning_push_protection": "enabled",
-                        "dependabot_alerts": "enabled"
+                        "dependabot_alerts": "enabled",
+                        "dependabot_security_updates": "enabled"
                     }
                 }
             ]),
@@ -394,6 +401,10 @@ async fn org_context_fetch_aggregates_all_endpoints() {
         ctx.dependabot_alerts_default,
         FeatureDefaultState::Enabled
     ));
+    assert!(matches!(
+        ctx.dependabot_security_updates_default,
+        FeatureDefaultState::Enabled
+    ));
     match ctx.members_without_2fa {
         MemberList::Ok(v) => assert_eq!(v, vec!["alice".to_string()]),
         _ => panic!(),
@@ -406,6 +417,40 @@ async fn org_context_fetch_aggregates_all_endpoints() {
         MemberList::Ok(v) => assert_eq!(v, vec!["owner".to_string()]),
         _ => panic!(),
     }
+}
+
+#[test]
+fn dependabot_security_updates_org_check_maps_default_states() {
+    let mut c = ctx(
+        TwoFactorState::Required,
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+    );
+
+    c.dependabot_security_updates_default = FeatureDefaultState::Enabled;
+    assert_eq!(
+        dependabot_security_updates::org_check(&c).status,
+        Status::Pass
+    );
+
+    c.dependabot_security_updates_default = FeatureDefaultState::Disabled;
+    assert_eq!(
+        dependabot_security_updates::org_check(&c).status,
+        Status::Fail
+    );
+
+    c.dependabot_security_updates_default = FeatureDefaultState::NotSet;
+    assert_eq!(
+        dependabot_security_updates::org_check(&c).status,
+        Status::Warn
+    );
+
+    c.dependabot_security_updates_default = FeatureDefaultState::Unknown;
+    assert_eq!(
+        dependabot_security_updates::org_check(&c).status,
+        Status::Skipped
+    );
 }
 
 #[tokio::test]
@@ -460,7 +505,7 @@ fn pr_reviews_org_check_no_pull_request_rule_fails() {
     c.rulesets = rulesets_with_pr(false, true, true, true);
     let o = pr_reviews_org::org_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.summary.contains("not required"));
+    assert!(o.summary.to_ascii_lowercase().contains("not required"));
 }
 
 #[test]
@@ -469,21 +514,18 @@ fn pr_reviews_org_check_lists_missing_sub_requirements() {
     c.rulesets = rulesets_with_pr(true, false, false, false);
     let o = pr_reviews_org::org_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(
-        o.items
-            .iter()
-            .any(|i| i.contains("stale reviews not dismissed"))
-    );
-    assert!(
-        o.items
-            .iter()
-            .any(|i| i.contains("last-push approval not required"))
-    );
-    assert!(
-        o.items
-            .iter()
-            .any(|i| i.contains("code-owner review not required"))
-    );
+    assert!(o.items.iter().any(|i| {
+        i.to_ascii_lowercase()
+            .contains("stale reviews not dismissed")
+    }));
+    assert!(o.items.iter().any(|i| {
+        i.to_ascii_lowercase()
+            .contains("last-push approval not required")
+    }));
+    assert!(o.items.iter().any(|i| {
+        i.to_ascii_lowercase()
+            .contains("code-owner review not required")
+    }));
 }
 
 #[test]

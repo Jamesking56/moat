@@ -26,13 +26,13 @@ struct AccountType {
 
 pub fn print_repo_header(owner: &str, repo: &str) {
     let left = format!("{owner}/{repo}");
-    panel::header_panel("◈", "moat", &left, "repository");
+    panel::header_panel("◈", "moat", &left, "Repository");
 }
 
 pub fn print_header(account: &str, kind: AccountKind) {
     let kind_long = match kind {
-        AccountKind::Organization => "organization",
-        AccountKind::User => "user",
+        AccountKind::Organization => "Organization",
+        AccountKind::User => "User",
     };
     panel::header_panel("◈", "moat", account, kind_long);
 }
@@ -50,7 +50,7 @@ struct OrgMembership {
 
 fn not_admin_bail(target: &str) -> anyhow::Error {
     anyhow!(
-        "you are not an admin of `{target}`. moat requires admin access to surface the data it audits — run it on an organization or repository you administer."
+        "You are not an admin of `{target}`. moat requires admin access to surface the data it audits — run it on an organization or repository you administer."
     )
 }
 
@@ -76,7 +76,7 @@ pub async fn ensure_viewer_can_audit_account(
             let viewer = match client.get_json::<ViewerLogin>("/user").await? {
                 Fetch::Ok(v) => v,
                 _ => bail!(
-                    "could not read authenticated viewer (`GET /user`) — check your token scopes"
+                    "Could not read authenticated viewer (`GET /user`) — check your token scopes"
                 ),
             };
             if !viewer.login.eq_ignore_ascii_case(account) {
@@ -121,14 +121,14 @@ pub async fn detect_account(client: &impl GitHubClient, name: &str) -> Result<Ac
         Fetch::Ok(a) if a.kind == "User" => Ok(AccountKind::User),
         Fetch::Ok(a) => bail!("unexpected account type `{}` for `{name}`", a.kind),
         Fetch::Forbidden => Err(anyhow!(
-            "no access to `{name}` — check your token scopes (`read:org` for private orgs)"
+            "No access to `{name}` — check your token scopes (`read:org` for private orgs)"
         )),
         Fetch::NotFound => bail!("no GitHub account named `{name}` was found."),
     }
 }
 
 pub async fn fetch_org_context(client: &impl GitHubClient, org: &str) -> Result<OrgContext> {
-    panel::progress("fetching organization");
+    panel::progress("Fetching organization");
     OrgContext::fetch(client, org).await
 }
 
@@ -151,7 +151,7 @@ pub async fn list_repos(
     let listings: Vec<RepoListing> = match client.get_paginated(&listing_path).await? {
         Fetch::Ok(v) => v,
         Fetch::Forbidden => {
-            bail!("no permission to list repositories for `{account}` — check your token scopes")
+            bail!("No permission to list repositories for `{account}` — check your token scopes")
         }
         Fetch::NotFound => Vec::new(),
     };
@@ -192,7 +192,7 @@ async fn fetch_contexts(
     listings: Vec<RepoListing>,
 ) -> Result<Vec<RepoContext>> {
     let total = listings.len();
-    panel::progress(&format!("scanning {total} repositories"));
+    panel::progress(&format!("Scanning {total} repositories"));
 
     let mut stream = stream::iter(listings)
         .map(|listing| async move { RepoContext::fetch(client, account, listing).await })
@@ -403,7 +403,7 @@ pub fn render_posture_panel(results: &[CheckResult]) {
         ((passed + skipped) * 100) / total
     };
 
-    panel::top_section("security posture");
+    panel::top_section("Security posture");
     panel::blank();
 
     let label = format!("{pct}% hardened");
@@ -481,7 +481,7 @@ pub fn render_checks_panel(
     let mut sorted: Vec<&CheckResult> = results.iter().collect();
     sorted.sort_by_key(|r| (order(r.status), breadth(r)));
 
-    panel::top_section("checks");
+    panel::top_section("Checks");
 
     let inner = panel::width() - 2;
     let text_width = inner.saturating_sub(6);
@@ -560,7 +560,7 @@ pub fn render_checks_panel(
         panel::blank();
 
         if let Some(note) = &r.state_note {
-            let line_text = format!("currently: {note}.");
+            let line_text = format!("Currently: {note}.");
             for line in panel::wrap(&line_text, text_width) {
                 let l = panel::Line::new().space(5).styled(&line, panel::text);
                 panel::row(l);
@@ -569,7 +569,7 @@ pub fn render_checks_panel(
         }
 
         let why = if r.org_only_issue {
-            "every new repository inherits the organization's defaults; without this control set at the org level, the next repo someone creates lands unprotected and stays that way until somebody toggles it by hand.".to_string()
+            "Every new repository inherits the organization's defaults; without this control set at the org level, the next repo someone creates lands unprotected and stays that way until somebody toggles it by hand.".to_string()
         } else {
             r.check.why_enable.replace("→", "›")
         };
@@ -591,9 +591,9 @@ pub fn render_checks_panel(
         let mut wrote_section = false;
         if show_org {
             let header = if show_repo {
-                "fix the default policy (applies to new repos):"
+                "Fix the default policy (applies to new repositories):"
             } else {
-                "fix the default policy:"
+                "Fix the default policy:"
             };
             let head = panel::Line::new().space(5).styled(header, panel::text_bold);
             panel::row(head);
@@ -609,7 +609,7 @@ pub fn render_checks_panel(
             }
             let head = panel::Line::new()
                 .space(5)
-                .styled("fix each affected repository:", panel::text_bold);
+                .styled("Fix each affected repository:", panel::text_bold);
             panel::row(head);
             for line in panel::wrap(rp, text_width.saturating_sub(2)) {
                 let l = panel::Line::new().space(7).styled(&line, panel::info);
@@ -619,7 +619,7 @@ pub fn render_checks_panel(
         if show_generic {
             let head = panel::Line::new()
                 .space(5)
-                .styled("how to fix:", panel::text_bold);
+                .styled("How to fix:", panel::text_bold);
             panel::row(head);
             for line in panel::wrap(org_part, text_width.saturating_sub(2)) {
                 let l = panel::Line::new().space(7).styled(&line, panel::info);
@@ -632,9 +632,9 @@ pub fn render_checks_panel(
         if is_finding && r.org_default_issue {
             panel::blank();
             let note = if r.org_only_issue {
-                "every existing repo has this enabled, but no security configuration is set as the default for newly created repositories — new repos will be created without it"
+                "Every existing repository has this enabled, but no security configuration is set as the default for newly created repositories — new repositories will be created without it"
             } else {
-                "org-wide default also flagged — fixing the default configuration's policy propagates to new repos"
+                "Org-wide default also flagged — fixing the default configuration's policy propagates to new repositories"
             };
             for line in panel::wrap(note, text_width) {
                 let l = panel::Line::new().space(5).styled(&line, panel::accent);
@@ -646,14 +646,14 @@ pub fn render_checks_panel(
             match r.check.id {
                 "repositories_have_no_direct_collaborators" => {
                     render_member_block(
-                        "outside collaborators",
+                        "Outside collaborators",
                         &o.outside_collaborators,
                         text_width,
                         verbose,
                     );
                 }
                 "repositories_branch_protection_applies_to_admins" => {
-                    render_member_block("bypass list", &o.admins, text_width, verbose);
+                    render_member_block("Bypass list", &o.admins, text_width, verbose);
                 }
                 _ => {}
             }
@@ -661,7 +661,7 @@ pub fn render_checks_panel(
 
         if is_finding && !r.affected_repos.is_empty() {
             panel::blank();
-            let lbl = format!("affected repositories ({})", r.affected_repos.len());
+            let lbl = format!("Affected repositories ({})", r.affected_repos.len());
             let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
             panel::row(l);
 
@@ -705,7 +705,7 @@ fn render_member_block(title: &str, list: &MemberList, text_width: usize, verbos
             let lbl = format!("{title} (0)");
             let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
             panel::row(l);
-            let none = panel::Line::new().space(5).styled("none", panel::muted);
+            let none = panel::Line::new().space(5).styled("None", panel::muted);
             panel::row(none);
         }
         MemberList::Ok(v) => {

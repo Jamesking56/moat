@@ -4,18 +4,18 @@ use crate::checks::org_context::{OrgContext, ReleaseImmutabilityState};
 use crate::checks::repo_context::{ReleaseImmutabilityRepoState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "repositories releases are immutable";
+pub const LABEL: &str = "Repositories releases are immutable";
 pub const HOW_TO_FIX: &str = "GitHub → your organization → settings → repository → general → under \"Releases\", set immutable releases to \"All repositories\" (per-repo: settings → general → under \"Releases\", enable \"Immutable releases\").";
-pub const WHY_ENABLE: &str = "without immutability, an existing tag can be moved or its assets replaced after the fact; downstream consumers pinned to a version they audited will silently fetch different bytes the next time they install.";
+pub const WHY_ENABLE: &str = "Without immutability, an existing tag can be moved or its assets replaced after the fact; downstream consumers pinned to a version they audited will silently fetch different bytes the next time they install.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     match ctx.release_immutability {
-        ReleaseImmutabilityState::All => CheckOutcome::pass("enforced on all repositories"),
+        ReleaseImmutabilityState::All => CheckOutcome::pass("Enforced on all repositories"),
         ReleaseImmutabilityState::Selected => {
-            CheckOutcome::warn("enforced on selected repositories only")
+            CheckOutcome::warn("Enforced on selected repositories only")
         }
-        ReleaseImmutabilityState::None => CheckOutcome::fail("not enforced"),
-        ReleaseImmutabilityState::Unknown => CheckOutcome::skipped("unknown"),
+        ReleaseImmutabilityState::None => CheckOutcome::fail("Not enforced"),
+        ReleaseImmutabilityState::Unknown => CheckOutcome::skipped("Unknown"),
     }
 }
 

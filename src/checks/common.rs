@@ -170,7 +170,7 @@ impl FeatureState {
             FeatureState::Enabled => CheckOutcome::pass("✓"),
             FeatureState::Disabled => CheckOutcome::fail("✗"),
             FeatureState::Unknown => CheckOutcome::skipped("?"),
-            FeatureState::PlanGated => CheckOutcome::skipped("n/a (plan)"),
+            FeatureState::PlanGated => CheckOutcome::skipped("N/a (plan)"),
         }
     }
 }

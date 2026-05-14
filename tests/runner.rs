@@ -142,9 +142,9 @@ async fn invalid_moat_toml_aborts_the_run() {
         Err(e) => e,
     };
     let msg = format!("{err:#}");
-    assert!(msg.contains("invalid moat.toml"), "got: {msg}");
+    assert!(msg.contains("Invalid moat.toml"), "got: {msg}");
     assert!(msg.contains("acme/demo"), "got: {msg}");
-    assert!(msg.contains("unknown check"), "got: {msg}");
+    assert!(msg.contains("Unknown check"), "got: {msg}");
 }
 
 #[tokio::test]

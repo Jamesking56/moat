@@ -4,7 +4,7 @@ use clap::{Parser, ValueEnum};
 #[command(
     name = "moat",
     version,
-    about = "supply-chain hygiene for your github organization & repositories"
+    about = "Supply-chain hygiene for your GitHub organization & repositories"
 )]
 pub struct Cli {
     pub account: String,

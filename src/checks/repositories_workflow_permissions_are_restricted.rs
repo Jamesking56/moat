@@ -4,13 +4,13 @@ use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
 use crate::support::workflows::{self, PermissionsBlock, WorkflowsState};
 
-pub const LABEL: &str = "repositories workflow permissions are restricted";
-pub const HOW_TO_FIX: &str = "in each `.github/workflows/*.yml`, add a top-level `permissions:` block listing only the scopes the workflow actually needs (`contents: read`, etc.).";
-pub const WHY_ENABLE: &str = "without a declared `permissions:` block (or with `write-all`), every step in the workflow — including third-party actions — runs with full repo write access, turning any compromised action into a code-push primitive.";
+pub const LABEL: &str = "Repositories workflow permissions are restricted";
+pub const HOW_TO_FIX: &str = "In each `.github/workflows/*.yml`, add a top-level `permissions:` block listing only the scopes the workflow actually needs (`contents: read`, etc.).";
+pub const WHY_ENABLE: &str = "Without a declared `permissions:` block (or with `write-all`), every step in the workflow — including third-party actions — runs with full repo write access, turning any compromised action into a code-push primitive.";
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     let workflows = match &ctx.workflows {
-        WorkflowsState::Loaded(w) if w.is_empty() => return CheckOutcome::skipped("n/a"),
+        WorkflowsState::Loaded(w) if w.is_empty() => return CheckOutcome::skipped("N/a"),
         WorkflowsState::Loaded(w) => w,
         WorkflowsState::NoPermission => return CheckOutcome::skipped("?"),
     };

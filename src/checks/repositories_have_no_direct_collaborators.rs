@@ -4,15 +4,15 @@ use crate::checks::org_context::{MemberList, OrgContext};
 use crate::checks::repo_context::{DirectCollaboratorsState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "repositories have no direct collaborators";
+pub const LABEL: &str = "Repositories have no direct collaborators";
 pub const HOW_TO_FIX: &str = "GitHub → organization (or repository) → settings → collaborators and teams → under \"Manage access\", remove direct/outside users → grant access via teams instead.";
-pub const WHY_ENABLE: &str = "direct collaborators bypass org-level team membership audits and outlive role changes; access reviews miss them, so a long-departed contributor can keep push rights indefinitely.";
+pub const WHY_ENABLE: &str = "Direct collaborators bypass org-level team membership audits and outlive role changes; access reviews miss them, so a long-departed contributor can keep push rights indefinitely.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     ctx.outside_collaborators
-        .outcome(CheckOutcome::pass("no outside collaborators"), |v| {
+        .outcome(CheckOutcome::pass("No outside collaborators"), |v| {
             CheckOutcome::fail(format!(
-                "{} outside collaborator(s) with access to private/elevated repos",
+                "{} outside collaborator(s) with access to private/elevated repositories",
                 v.len()
             ))
         })

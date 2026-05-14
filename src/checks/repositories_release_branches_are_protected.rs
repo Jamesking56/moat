@@ -4,18 +4,18 @@ use crate::checks::org_context::{OrgContext, RulesetsState};
 use crate::checks::repo_context::{BranchEval, BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "repositories release branches are protected";
+pub const LABEL: &str = "Repositories release branches are protected";
 pub const HOW_TO_FIX: &str = "GitHub → organization (or repository) → settings → rules → \"New ruleset\" → \"New branch ruleset\" → target your release branches (main, master, x.x) and set enforcement status to \"Active\".";
-pub const WHY_ENABLE: &str = "every other branch-level safeguard (signed commits, required reviews, linear history) hangs off a ruleset — with no ruleset attached to your release branches, none of those protections apply.";
+pub const WHY_ENABLE: &str = "Every other branch-level safeguard (signed commits, required reviews, linear history) hangs off a ruleset — with no ruleset attached to your release branches, none of those protections apply.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     if ctx.rulesets.state == RulesetsState::NoPermission {
         return CheckOutcome::skipped("?");
     }
     if ctx.rulesets.any_active {
-        CheckOutcome::pass("at least one active org-level ruleset")
+        CheckOutcome::pass("At least one active org-level ruleset")
     } else {
-        CheckOutcome::fail("no active org-level rulesets")
+        CheckOutcome::fail("No active org-level rulesets")
     }
 }
 
