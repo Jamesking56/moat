@@ -320,7 +320,7 @@ pub static CHECKS: &[Check] = &[
         applies_to_repo: None,
         org_only: true,
         ruleset_based: false,
-        repo_link_path: None,
+        repo_link_path: Some("/settings/access"),
     },
     Check {
         id: "repositories_private_vulnerability_reporting_is_enabled",
@@ -347,7 +347,7 @@ pub static CHECKS: &[Check] = &[
         applies_to_repo: Some(public_only),
         org_only: false,
         ruleset_based: false,
-        repo_link_path: None,
+        repo_link_path: Some("/security/policy"),
     },
     Check {
         id: "repositories_workflow_actions_are_pinned",

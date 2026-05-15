@@ -4,7 +4,7 @@ use crate::checks::repo_context::{FilePresence, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories have security policy";
-pub const HOW_TO_FIX: &str = "https://github.com/{org}/{repo}/security/policy > __Click__ -> Start setup > __Edit__ -> SECURITY.md (use a private disclosure channel: email or GitHub advisories) > __Click__ -> Commit changes";
+pub const HOW_TO_FIX: &str = "In all the links below > __Click__ -> Start setup > __Edit__ -> SECURITY.md (use a private disclosure channel: email or GitHub advisories) > __Click__ -> Commit changes";
 pub const WHY_ENABLE: &str = "Without a disclosure channel, well-meaning researchers file public issues with full PoCs — `SECURITY.md` is what funnels them to a private channel before the world sees the bug.";
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {

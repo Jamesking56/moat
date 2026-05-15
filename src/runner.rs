@@ -619,7 +619,13 @@ pub fn render_checks_panel(
 
         panel::blank();
 
-        if matches!(r.status, Status::Fail | Status::Warn) {
+        let is_finding = matches!(r.status, Status::Fail | Status::Warn);
+        let plan_free = org
+            .map(|o| o.plan == crate::checks::org_context::OrgPlan::Free)
+            .unwrap_or(false);
+        let rules_link = is_finding && r.check.ruleset_based && plan_free;
+
+        if is_finding {
             let header = if r.org_default_issue {
                 "Fix the default policy:"
             } else {
@@ -636,12 +642,14 @@ pub fn render_checks_panel(
                 .collect();
             branches.sort();
             branches.dedup();
-            let fix_text = substitute_fix_template(r.check.how_to_fix, account, repo, &branches);
+            let mut fix_text =
+                substitute_fix_template(r.check.how_to_fix, account, repo, &branches);
+            if rules_link {
+                fix_text = rewrite_fix_for_free_plan(&fix_text, account);
+            }
             let hyperlinks = std::io::IsTerminal::is_terminal(&std::io::stdout());
             render_fix_block(&fix_text, text_width.saturating_sub(2), hyperlinks);
         }
-
-        let is_finding = matches!(r.status, Status::Fail | Status::Warn);
 
         if is_finding && r.org_default_issue {
             panel::blank();
@@ -652,19 +660,6 @@ pub fn render_checks_panel(
             };
             for line in panel::wrap(note, text_width) {
                 let l = panel::Line::new().space(5).styled(&line, panel::accent);
-                panel::row(l);
-            }
-        }
-
-        let plan_free = org
-            .map(|o| o.plan == crate::checks::org_context::OrgPlan::Free)
-            .unwrap_or(false);
-        let rules_link = is_finding && r.check.ruleset_based && plan_free;
-        if rules_link {
-            panel::blank();
-            let note = "Organization rulesets require GitHub Team or Enterprise to enforce — on the Free plan, the rules above are saved but not applied. Either upgrade the organization, or apply equivalent rules per-repo.";
-            for line in panel::wrap(note, text_width) {
-                let l = panel::Line::new().space(5).styled(&line, panel::warning);
                 panel::row(l);
             }
         }
@@ -807,6 +802,14 @@ fn substitute_fix_template(
         branches.join(", ")
     };
     with_repo.replace("{branches}", &branches_text)
+}
+
+fn rewrite_fix_for_free_plan(fix_text: &str, account: &str) -> String {
+    let prefix = format!("https://github.com/organizations/{account}/settings/rules ");
+    match fix_text.strip_prefix(&prefix) {
+        Some(rest) => format!("In all the links below {rest}"),
+        None => fix_text.to_string(),
+    }
 }
 
 #[derive(Debug)]

@@ -5,7 +5,7 @@ use crate::checks::repo_context::{DirectCollaboratorsState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories have no direct collaborators";
-pub const HOW_TO_FIX: &str = "https://github.com/{org}/{repo}/settings/access > Manage access > __Remove__ -> Every direct/outside user > Grant access via teams instead";
+pub const HOW_TO_FIX: &str = "In all the links below > Manage access > __Remove__ -> Every direct/outside user > Grant access via teams instead";
 pub const WHY_ENABLE: &str = "Direct collaborators bypass org-level team membership audits and outlive role changes; access reviews miss them, so a long-departed contributor can keep push rights indefinitely.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
