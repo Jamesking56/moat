@@ -5,7 +5,7 @@ use crate::support::outcome::CheckOutcome;
 use crate::support::workflows::WorkflowsState;
 
 pub const LABEL: &str = "Repositories have dependabot config";
-pub const HOW_TO_FIX: &str = "Add `.github/dependabot.yml` with `package-ecosystem: github-actions` (and any other ecosystems you ship).";
+pub const HOW_TO_FIX: &str = "Add a `.github/dependabot.yml` enabling the `github-actions` ecosystem with the following content:\n```yaml\nversion: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: weekly\n```";
 pub const WHY_ENABLE: &str = "Pinning actions to SHAs is only safe if something keeps them up to date; without Dependabot the pins rot and either get bumped to a tag (defeating the pin) or stay stuck on a known-vulnerable revision.";
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {

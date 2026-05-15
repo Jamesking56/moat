@@ -5,7 +5,7 @@ use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories fork pull requests require approval";
-pub const HOW_TO_FIX: &str = "GitHub → your organization → settings → actions → general → under \"Approval for running fork pull request workflows from contributors\", select \"Require approval for all external contributors\" (per-repo: settings → actions → general → under \"Approval for running fork pull request workflows from contributors\", select \"Require approval for all external contributors\").";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/actions > Approval for running fork pull request workflows from contributors > __Select__ -> Require approval for all external contributors > __Click__ -> Save";
 pub const WHY_ENABLE: &str = "A fork PR can ship malicious workflow changes that run with your runners' filesystem and network access on the first push; approval gating lets a human read the diff before code from a stranger executes.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {

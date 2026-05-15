@@ -3,7 +3,7 @@ use crate::checks::org_context::{OrgContext, TwoFactorState};
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Organization requires two factor";
-pub const HOW_TO_FIX: &str = "GitHub → your organization → settings → authentication security → under \"two-factor authentication\", enable both \"require two-factor authentication for everyone in the <org> organization\" and \"only allow secure two-factor methods\".";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/security > Two-factor authentication > Check -> Require two-factor authentication for everyone in the {org} organization > Check -> Only allow secure two-factor methods > Click -> Save";
 pub const WHY_ENABLE: &str = "Stolen passwords are the entry point of most maintainer-account compromises; enforcing 2FA org-wide raises the cost of a takeover from a phishing email to a physical device.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {

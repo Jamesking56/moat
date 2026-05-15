@@ -60,7 +60,7 @@ pub fn feature_state_phrase(
             repos_word(total)
         ),
         (Some(false), n) => format!(
-            "{feature} is enabled by default but disabled on {n}/{total} {}",
+            "{feature} is enabled by default org-wide, but {n}/{total} {} override it",
             repos_word(total)
         ),
         (Some(true), n) if n > 0 => format!(
@@ -96,7 +96,7 @@ where
             repos_word(total)
         ),
         (Some(true), n) => format!(
-            "{feature} is required by an org-level ruleset but unenforced on release branches in {n}/{total} {}",
+            "{feature} is required by an org-level ruleset, but {n}/{total} {} override it on release branches",
             repos_word(total)
         ),
         (Some(false), 0) if total > 0 => format!(

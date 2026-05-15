@@ -120,11 +120,11 @@ Without required reviews, a single compromised contributor account can push dire
 
 If admins can bypass the ruleset, a single compromised admin token is enough to push unsigned or unreviewed code straight to a release branch — the rule becomes advisory.
 
-### `repositories_default_branch_is_locked`
+### `repositories_release_branches_are_locked`
 
 Force pushes and branch deletions rewrite history — an attacker (or a tired maintainer) can erase the audit trail of a malicious commit or quietly replace a tagged release with a different tree.
 
-### `repositories_default_branch_has_linear_history`
+### `repositories_release_branches_have_linear_history`
 
 Merge commits can hide unreviewed parents — a `git merge` of an unprotected side branch can introduce code that no reviewer ever saw, while still appearing as a normal merge in the PR.
 

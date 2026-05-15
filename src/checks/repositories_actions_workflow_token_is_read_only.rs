@@ -5,7 +5,7 @@ use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories actions workflow token is read only";
-pub const HOW_TO_FIX: &str = "GitHub → your organization → settings → actions → general → under \"Workflow permissions\", select \"Read repository contents and packages permissions\" (apply the same setting per-repo at repo → settings → actions → general → workflow permissions).";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/actions > Workflow permissions > __Select__ -> Read repository contents and packages permissions > __Click__ -> Save";
 pub const WHY_ENABLE: &str = "Every workflow inherits this token by default; granting write at the org or repo level means a typo'd action reference or a hijacked third-party action can rewrite history, tags, and releases without ever needing a maintainer's credentials.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {

@@ -11,6 +11,8 @@ fn result_with(status: Status) -> CheckResult {
         summary: String::new(),
         state_note: None,
         affected_repos: Vec::new(),
+        affected_repo_branches: Vec::new(),
+        affected_repo_release_branches: Vec::new(),
         org_default_issue: false,
         org_only_issue: false,
     }

@@ -264,6 +264,10 @@ pub fn info(s: &str) -> String {
     let c = palette().info;
     s.truecolor(c.0, c.1, c.2).to_string()
 }
+pub fn info_underline(s: &str) -> String {
+    let c = palette().info;
+    s.truecolor(c.0, c.1, c.2).underline().to_string()
+}
 pub fn accent(s: &str) -> String {
     let c = palette().accent;
     s.truecolor(c.0, c.1, c.2).to_string()
@@ -363,6 +367,10 @@ pub fn row(line: Line) {
         " ".repeat(pad),
         border("│")
     );
+}
+
+pub fn raw_line(line: Line) {
+    println!("{}", line.rendered);
 }
 
 pub fn divider() {

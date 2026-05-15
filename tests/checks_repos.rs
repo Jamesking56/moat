@@ -9,8 +9,6 @@ use moat::checks::{
     repositories_actions_workflow_token_is_read_only as workflow_token,
     repositories_branch_protection_applies_to_admins as admin_enforcement,
     repositories_commits_are_signed as signed_commits,
-    repositories_default_branch_has_linear_history as linear_history,
-    repositories_default_branch_is_locked as immutable_branch,
     repositories_dependabot_alerts_are_enabled as dependabot_alerts,
     repositories_dependabot_security_updates_are_enabled as dependabot_security_updates,
     repositories_fork_pull_requests_require_approval as fork_pr_approval,
@@ -20,7 +18,8 @@ use moat::checks::{
     repositories_private_vulnerability_reporting_is_enabled as pvr,
     repositories_pull_request_target_is_safe as prt_safe,
     repositories_pull_requests_require_reviews as pr_reviews,
-    repositories_release_branches_are_protected as protected_release_branches,
+    repositories_release_branches_are_locked as immutable_branch,
+    repositories_release_branches_have_linear_history as linear_history,
     repositories_releases_are_immutable as releases_immutable,
     repositories_secret_push_protection_is_enabled as push_protection,
     repositories_secret_scanning_is_enabled as secret_scanning,
@@ -71,41 +70,6 @@ fn ctx(branch: BranchProtectionState, token: WorkflowTokenState) -> RepoContext 
         codeowners: FilePresence::Absent,
         config: moat::config::Config::default(),
     }
-}
-
-#[test]
-fn branch_protection_states() {
-    assert_eq!(
-        protected_release_branches::repo_check(&ctx(
-            protected(false, false),
-            WorkflowTokenState::Read
-        ))
-        .status,
-        Status::Pass
-    );
-    assert_eq!(
-        protected_release_branches::repo_check(&ctx(
-            BranchProtectionState::Unprotected,
-            WorkflowTokenState::Read
-        ))
-        .status,
-        Status::Fail
-    );
-    let mut no_default = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    no_default.branch_protections = BranchProtections::none();
-    assert_eq!(
-        protected_release_branches::repo_check(&no_default).status,
-        Status::Skipped
-    );
-
-    assert_eq!(
-        protected_release_branches::repo_check(&ctx(
-            BranchProtectionState::NoPermission,
-            WorkflowTokenState::Read
-        ))
-        .status,
-        Status::Skipped
-    );
 }
 
 #[test]

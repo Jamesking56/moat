@@ -4,8 +4,8 @@ use crate::checks::org_context::{OrgContext, RulesetsState};
 use crate::checks::repo_context::{BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "Repositories default branch has linear history";
-pub const HOW_TO_FIX: &str = "GitHub → organization (or repository) → settings → rules → edit the ruleset for your release branches → under \"Rules\", enable \"Require linear history\".";
+pub const LABEL: &str = "Repositories release branches have linear history";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (__Click__ -> New ruleset -> New branch ruleset or __Edit__ -> Existing one) > Enforcement status > __Select__ -> Active > Target branches > __Add target__ -> {branches} > Branch rules > __Check__ -> Require linear history > __Click__ -> Create/Save changes";
 pub const WHY_ENABLE: &str = "Merge commits can hide unreviewed parents — a `git merge` of an unprotected side branch can introduce code that no reviewer ever saw, while still appearing as a normal merge in the PR.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {

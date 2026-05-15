@@ -5,7 +5,7 @@ use crate::support::outcome::CheckOutcome;
 use crate::support::workflows::{self, PermissionsBlock, WorkflowsState};
 
 pub const LABEL: &str = "Repositories workflow permissions are restricted";
-pub const HOW_TO_FIX: &str = "In each `.github/workflows/*.yml`, add a top-level `permissions:` block listing only the scopes the workflow actually needs (`contents: read`, etc.).";
+pub const HOW_TO_FIX: &str = "In each `.github/workflows/*.yml`, add a top-level `permissions:` block listing only the scopes the workflow actually needs. For most read-only workflows that is:\n```yaml\npermissions:\n  contents: read\n```";
 pub const WHY_ENABLE: &str = "Without a declared `permissions:` block (or with `write-all`), every step in the workflow — including third-party actions — runs with full repo write access, turning any compromised action into a code-push primitive.";
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {

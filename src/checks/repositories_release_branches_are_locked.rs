@@ -4,8 +4,8 @@ use crate::checks::org_context::{OrgContext, RulesetsState};
 use crate::checks::repo_context::{BranchEval, BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "Repositories default branch is locked";
-pub const HOW_TO_FIX: &str = "GitHub → organization (or repository) → settings → rules → edit the ruleset for your release branches → under \"Rules\", enable both \"Block force pushes\" and \"Restrict deletions\".";
+pub const LABEL: &str = "Repositories release branches are locked";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (__Click__ -> New ruleset -> New branch ruleset or __Edit__ -> Existing one) > Enforcement status > __Select__ -> Active > Target branches > __Add target__ -> {branches} > Branch rules > __Check__ -> Restrict deletions > __Check__ -> Block force pushes > __Click__ -> Create/Save changes";
 pub const WHY_ENABLE: &str = "Force pushes and branch deletions rewrite history — an attacker (or a tired maintainer) can erase the audit trail of a malicious commit or quietly replace a tagged release with a different tree.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {

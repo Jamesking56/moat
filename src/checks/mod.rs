@@ -8,8 +8,6 @@ pub mod organization_requires_two_factor;
 pub mod repositories_actions_workflow_token_is_read_only;
 pub mod repositories_branch_protection_applies_to_admins;
 pub mod repositories_commits_are_signed;
-pub mod repositories_default_branch_has_linear_history;
-pub mod repositories_default_branch_is_locked;
 pub mod repositories_dependabot_alerts_are_enabled;
 pub mod repositories_dependabot_security_updates_are_enabled;
 pub mod repositories_fork_pull_requests_require_approval;
@@ -19,7 +17,8 @@ pub mod repositories_have_security_policy;
 pub mod repositories_private_vulnerability_reporting_is_enabled;
 pub mod repositories_pull_request_target_is_safe;
 pub mod repositories_pull_requests_require_reviews;
-pub mod repositories_release_branches_are_protected;
+pub mod repositories_release_branches_are_locked;
+pub mod repositories_release_branches_have_linear_history;
 pub mod repositories_releases_are_immutable;
 pub mod repositories_secret_push_protection_is_enabled;
 pub mod repositories_secret_scanning_is_enabled;
@@ -56,6 +55,19 @@ pub struct Check {
     /// returns `true`. Private repos are filtered out for checks that only
     /// make sense in a public-disclosure context.
     pub applies_to_repo: Option<fn(&RepoContext) -> bool>,
+    /// When `true`, the check is skipped entirely for non-organization
+    /// accounts (User accounts). Use for checks whose premise only makes
+    /// sense in an organization context (e.g. "use teams instead").
+    pub org_only: bool,
+    /// When `true`, this check evaluates org-level rulesets. On the GitHub
+    /// Free plan, rulesets are saved but not enforced — the renderer adds a
+    /// warning note so users know to upgrade or apply rules per-repo.
+    pub ruleset_based: bool,
+    /// Optional path suffix appended to `https://github.com/{org}/{repo}` for
+    /// each entry in the "Affected repositories" listing. Supports a
+    /// `{branch}` placeholder (substituted with the repo's default branch, or
+    /// `HEAD` if unknown). `None` links to the repo root.
+    pub repo_link_path: Option<&'static str>,
 }
 
 impl Check {
@@ -97,6 +109,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: None,
         state_note: organization_requires_two_factor::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "organization_members_all_have_two_factor",
@@ -107,6 +122,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: None,
         state_note: organization_members_all_have_two_factor::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "organization_new_members_default_to_no_permissions",
@@ -117,6 +135,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: None,
         state_note: organization_new_members_default_to_no_permissions::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     // ----- Org + Repo (merged) -----
     Check {
@@ -128,6 +149,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_actions_workflow_token_is_read_only::repo_check),
         state_note: repositories_actions_workflow_token_is_read_only::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_secret_scanning_is_enabled",
@@ -138,6 +162,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_secret_scanning_is_enabled::repo_check),
         state_note: repositories_secret_scanning_is_enabled::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_secret_push_protection_is_enabled",
@@ -148,6 +175,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_secret_push_protection_is_enabled::repo_check),
         state_note: repositories_secret_push_protection_is_enabled::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_dependabot_alerts_are_enabled",
@@ -158,6 +188,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_dependabot_alerts_are_enabled::repo_check),
         state_note: repositories_dependabot_alerts_are_enabled::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_dependabot_security_updates_are_enabled",
@@ -168,6 +201,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_dependabot_security_updates_are_enabled::repo_check),
         state_note: repositories_dependabot_security_updates_are_enabled::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_releases_are_immutable",
@@ -178,6 +214,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_releases_are_immutable::repo_check),
         state_note: repositories_releases_are_immutable::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_fork_pull_requests_require_approval",
@@ -188,16 +227,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_fork_pull_requests_require_approval::repo_check),
         state_note: repositories_fork_pull_requests_require_approval::state_note,
         applies_to_repo: Some(public_only),
-    },
-    Check {
-        id: "repositories_release_branches_are_protected",
-        label: repositories_release_branches_are_protected::LABEL,
-        how_to_fix: repositories_release_branches_are_protected::HOW_TO_FIX,
-        why_enable: repositories_release_branches_are_protected::WHY_ENABLE,
-        org_eval: Some(repositories_release_branches_are_protected::org_check),
-        repo_eval: Some(repositories_release_branches_are_protected::repo_check),
-        state_note: repositories_release_branches_are_protected::state_note,
-        applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_commits_are_signed",
@@ -208,6 +240,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_commits_are_signed::repo_check),
         state_note: repositories_commits_are_signed::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: true,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_pull_requests_require_reviews",
@@ -218,6 +253,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_pull_requests_require_reviews::repo_check),
         state_note: repositories_pull_requests_require_reviews::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: true,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_branch_protection_applies_to_admins",
@@ -228,26 +266,35 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_branch_protection_applies_to_admins::repo_check),
         state_note: repositories_branch_protection_applies_to_admins::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: true,
+        repo_link_path: None,
     },
     Check {
-        id: "repositories_default_branch_is_locked",
-        label: repositories_default_branch_is_locked::LABEL,
-        how_to_fix: repositories_default_branch_is_locked::HOW_TO_FIX,
-        why_enable: repositories_default_branch_is_locked::WHY_ENABLE,
-        org_eval: Some(repositories_default_branch_is_locked::org_check),
-        repo_eval: Some(repositories_default_branch_is_locked::repo_check),
-        state_note: repositories_default_branch_is_locked::state_note,
+        id: "repositories_release_branches_are_locked",
+        label: repositories_release_branches_are_locked::LABEL,
+        how_to_fix: repositories_release_branches_are_locked::HOW_TO_FIX,
+        why_enable: repositories_release_branches_are_locked::WHY_ENABLE,
+        org_eval: Some(repositories_release_branches_are_locked::org_check),
+        repo_eval: Some(repositories_release_branches_are_locked::repo_check),
+        state_note: repositories_release_branches_are_locked::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: true,
+        repo_link_path: None,
     },
     Check {
-        id: "repositories_default_branch_has_linear_history",
-        label: repositories_default_branch_has_linear_history::LABEL,
-        how_to_fix: repositories_default_branch_has_linear_history::HOW_TO_FIX,
-        why_enable: repositories_default_branch_has_linear_history::WHY_ENABLE,
-        org_eval: Some(repositories_default_branch_has_linear_history::org_check),
-        repo_eval: Some(repositories_default_branch_has_linear_history::repo_check),
-        state_note: repositories_default_branch_has_linear_history::state_note,
+        id: "repositories_release_branches_have_linear_history",
+        label: repositories_release_branches_have_linear_history::LABEL,
+        how_to_fix: repositories_release_branches_have_linear_history::HOW_TO_FIX,
+        why_enable: repositories_release_branches_have_linear_history::WHY_ENABLE,
+        org_eval: Some(repositories_release_branches_have_linear_history::org_check),
+        repo_eval: Some(repositories_release_branches_have_linear_history::repo_check),
+        state_note: repositories_release_branches_have_linear_history::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: true,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_webhooks_are_secure",
@@ -258,6 +305,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_webhooks_are_secure::repo_check),
         state_note: repositories_webhooks_are_secure::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_have_no_direct_collaborators",
@@ -268,6 +318,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_have_no_direct_collaborators::repo_check),
         state_note: repositories_have_no_direct_collaborators::state_note,
         applies_to_repo: None,
+        org_only: true,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_private_vulnerability_reporting_is_enabled",
@@ -278,6 +331,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_private_vulnerability_reporting_is_enabled::repo_check),
         state_note: repositories_private_vulnerability_reporting_is_enabled::state_note,
         applies_to_repo: Some(public_only),
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     // ----- Repo-only -----
     Check {
@@ -289,6 +345,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_have_security_policy::repo_check),
         state_note: repositories_have_security_policy::state_note,
         applies_to_repo: Some(public_only),
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_workflow_actions_are_pinned",
@@ -299,6 +358,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_workflow_actions_are_pinned::repo_check),
         state_note: repositories_workflow_actions_are_pinned::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_pull_request_target_is_safe",
@@ -309,6 +371,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_pull_request_target_is_safe::repo_check),
         state_note: repositories_pull_request_target_is_safe::state_note,
         applies_to_repo: Some(public_only),
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: None,
     },
     Check {
         id: "repositories_workflow_permissions_are_restricted",
@@ -319,6 +384,9 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_workflow_permissions_are_restricted::repo_check),
         state_note: repositories_workflow_permissions_are_restricted::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: Some("/tree/{branch}/.github/workflows"),
     },
     Check {
         id: "repositories_have_dependabot_config",
@@ -329,5 +397,8 @@ pub static CHECKS: &[Check] = &[
         repo_eval: Some(repositories_have_dependabot_config::repo_check),
         state_note: repositories_have_dependabot_config::state_note,
         applies_to_repo: None,
+        org_only: false,
+        ruleset_based: false,
+        repo_link_path: Some("/new/{branch}?filename=.github%2Fdependabot.yml"),
     },
 ];

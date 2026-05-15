@@ -5,7 +5,7 @@ use crate::checks::repo_context::{BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories commits are signed";
-pub const HOW_TO_FIX: &str = "GitHub → organization (or repository) → settings → rules → edit the ruleset for your release branches → under \"Rules\", enable \"Require signed commits\".";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (__Click__ -> New ruleset -> New branch ruleset or __Edit__ -> Existing one) > Enforcement status > __Select__ -> Active > Target branches > __Add target__ -> {branches} > Branch rules > __Check__ -> Require signed commits > __Click__ -> Create/Save changes";
 pub const WHY_ENABLE: &str = "A stolen developer token can push commits authored as anyone; requiring a verified signature ties each commit to a key the attacker doesn't have, turning a leaked token from a code-push into a noisy failure.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {

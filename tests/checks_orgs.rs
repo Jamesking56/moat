@@ -1,7 +1,7 @@
 use moat::checks::common::WebhookInfo;
 use moat::checks::org_context::{
-    DefaultRepoPermissionState, FeatureDefaultState, FeatureState, ForkPrContributorApprovalState,
-    MemberList, OrgContext, OrgRulesets, ReleaseImmutabilityState, RulesetsState, TwoFactorState,
+    DefaultRepoPermissionState, FeatureDefaultState, ForkPrContributorApprovalState, MemberList,
+    OrgContext, OrgPlan, OrgRulesets, ReleaseImmutabilityState, RulesetsState, TwoFactorState,
     WebhooksState, WorkflowTokenState,
 };
 use moat::checks::{
@@ -9,12 +9,12 @@ use moat::checks::{
     organization_new_members_default_to_no_permissions as default_repo_permission,
     organization_requires_two_factor as two_factor_required,
     repositories_branch_protection_applies_to_admins as admin_enforcement,
-    repositories_default_branch_has_linear_history as linear_history,
-    repositories_default_branch_is_locked as immutable_branch,
     repositories_dependabot_security_updates_are_enabled as dependabot_security_updates,
     repositories_fork_pull_requests_require_approval as fork_pr_approval,
     repositories_private_vulnerability_reporting_is_enabled as pvr,
     repositories_pull_requests_require_reviews as pr_reviews_org,
+    repositories_release_branches_are_locked as immutable_branch,
+    repositories_release_branches_have_linear_history as linear_history,
     repositories_releases_are_immutable as releases_immutable,
     repositories_webhooks_are_secure as webhooks_secure,
 };
@@ -29,6 +29,7 @@ fn ctx(
     admins: MemberList,
 ) -> OrgContext {
     OrgContext {
+        plan: OrgPlan::Unknown,
         two_factor_required: tfa,
         members_without_2fa: without,
         outside_collaborators: outside,
@@ -42,7 +43,7 @@ fn ctx(
         dependabot_alerts_default: FeatureDefaultState::Enabled,
         dependabot_security_updates_default: FeatureDefaultState::Enabled,
         webhooks: WebhooksState::Ok(Vec::new()),
-        private_vulnerability_reporting: FeatureState::Enabled,
+        private_vulnerability_reporting: FeatureDefaultState::Enabled,
         rulesets: OrgRulesets::empty(RulesetsState::Loaded),
     }
 }
@@ -174,13 +175,13 @@ fn fork_pr_approval_org_states() {
 #[test]
 fn pvr_org_states() {
     let mut c = base_ctx();
-    c.private_vulnerability_reporting = FeatureState::Enabled;
+    c.private_vulnerability_reporting = FeatureDefaultState::Enabled;
     assert_eq!(pvr::org_check(&c).status, Status::Pass);
-    c.private_vulnerability_reporting = FeatureState::Disabled;
+    c.private_vulnerability_reporting = FeatureDefaultState::Disabled;
     assert_eq!(pvr::org_check(&c).status, Status::Fail);
-    c.private_vulnerability_reporting = FeatureState::PlanGated;
-    assert_eq!(pvr::org_check(&c).status, Status::Skipped);
-    c.private_vulnerability_reporting = FeatureState::Unknown;
+    c.private_vulnerability_reporting = FeatureDefaultState::NotSet;
+    assert_eq!(pvr::org_check(&c).status, Status::Warn);
+    c.private_vulnerability_reporting = FeatureDefaultState::Unknown;
     assert_eq!(pvr::org_check(&c).status, Status::Skipped);
 }
 

@@ -5,8 +5,8 @@ use crate::support::outcome::CheckOutcome;
 use crate::support::workflows::{self, WorkflowsState};
 
 pub const LABEL: &str = "Repositories workflow actions are pinned";
-pub const HOW_TO_FIX: &str = "GitHub → repository → settings → actions → general → under \"Actions permissions\", tick \"Require actions to be pinned to a full-length commit SHA\" → Save (this enforces SHA pins on future workflows); then, in every existing workflow file, replace `uses: org/action@v1` with `uses: org/action@<40-char-SHA>  # v1` — let dependabot keep them current.";
-pub const WHY_ENABLE: &str = "Tags and branches are mutable — when tj-actions/changed-files was compromised in 2025, the attacker repointed the existing tags, so every workflow `@v1` instantly ran malicious code; SHA pins make that impossible, and the repo-level \"Require actions to be pinned\" setting prevents anyone from re-introducing unpinned refs.";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/actions > General actions permissions > __Check__ -> Require actions to be pinned to a full-length commit SHA > __Click__ -> Save";
+pub const WHY_ENABLE: &str = "Tags and branches are mutable — when tj-actions/changed-files was compromised in 2025, the attacker repointed the existing tags, so every workflow `@v1` instantly ran malicious code; SHA pins make that impossible, and the repo-level \"Require actions to be pinned\" setting prevents anyone from re-introducing unpinned refs. Note: enforcement happens at workflow run time — a push with unpinned `uses:` refs is not rejected, but any workflow it triggers will fail to start until the refs are pinned.";
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     let enforced = matches!(ctx.sha_pinning, SHAPinningState::Enforced);

@@ -18,7 +18,17 @@ where
     common::traced(None, label, fut).await
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OrgPlan {
+    Free,
+    Team,
+    Enterprise,
+    Other,
+    Unknown,
+}
+
 pub struct OrgContext {
+    pub plan: OrgPlan,
     pub two_factor_required: TwoFactorState,
     pub members_without_2fa: MemberList,
     pub outside_collaborators: MemberList,
@@ -32,7 +42,7 @@ pub struct OrgContext {
     pub dependabot_alerts_default: FeatureDefaultState,
     pub dependabot_security_updates_default: FeatureDefaultState,
     pub webhooks: WebhooksState,
-    pub private_vulnerability_reporting: FeatureState,
+    pub private_vulnerability_reporting: FeatureDefaultState,
     pub rulesets: OrgRulesets,
 }
 
@@ -151,6 +161,12 @@ impl MemberList {
 struct OrgResponse {
     two_factor_requirement_enabled: Option<bool>,
     default_repository_permission: Option<String>,
+    plan: Option<OrgPlanResponse>,
+}
+
+#[derive(Deserialize)]
+struct OrgPlanResponse {
+    name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -180,6 +196,7 @@ struct SecurityConfigInner {
     secret_scanning_push_protection: Option<String>,
     dependabot_alerts: Option<String>,
     dependabot_security_updates: Option<String>,
+    private_vulnerability_reporting: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -208,7 +225,6 @@ impl OrgContext {
             outside_collaborators,
             admins,
             webhooks,
-            private_vulnerability_reporting,
             rulesets,
         ) = tokio::try_join!(
             traced(
@@ -244,14 +260,10 @@ impl OrgContext {
                 "organization webhooks",
                 common::fetch_webhooks(client, &hooks_path)
             ),
-            traced(
-                "private vulnerability reporting default",
-                fetch_org_private_vulnerability_reporting(client, org),
-            ),
             traced("organization rulesets", fetch_org_rulesets(client, org)),
         )?;
 
-        let (two_factor_required, default_repository_permission) = match org_resp {
+        let (two_factor_required, default_repository_permission, plan) = match org_resp {
             Fetch::Ok(o) => {
                 let tfa = match o.two_factor_requirement_enabled {
                     Some(true) => TwoFactorState::Required,
@@ -266,9 +278,22 @@ impl OrgContext {
                     Some(other) => DefaultRepoPermissionState::Other(other.to_string()),
                     None => DefaultRepoPermissionState::Unknown,
                 };
-                (tfa, perm)
+                let plan = match o.plan.as_ref().and_then(|p| p.name.as_deref()) {
+                    Some("free") => OrgPlan::Free,
+                    Some("team") => OrgPlan::Team,
+                    Some("enterprise") | Some("business") | Some("business_plus") => {
+                        OrgPlan::Enterprise
+                    }
+                    Some(_) => OrgPlan::Other,
+                    None => OrgPlan::Unknown,
+                };
+                (tfa, perm, plan)
             }
-            _ => (TwoFactorState::Unknown, DefaultRepoPermissionState::Unknown),
+            _ => (
+                TwoFactorState::Unknown,
+                DefaultRepoPermissionState::Unknown,
+                OrgPlan::Unknown,
+            ),
         };
 
         let release_immutability = match immut_resp {
@@ -312,6 +337,7 @@ impl OrgContext {
             push_protection_default,
             dependabot_alerts_default,
             dependabot_security_updates_default,
+            private_vulnerability_reporting,
         ) = match sec_defaults_resp {
             Fetch::Ok(defaults) => {
                 let chosen = defaults
@@ -328,8 +354,10 @@ impl OrgContext {
                         feature_default(c.secret_scanning_push_protection.as_deref()),
                         feature_default(c.dependabot_alerts.as_deref()),
                         feature_default(c.dependabot_security_updates.as_deref()),
+                        feature_default(c.private_vulnerability_reporting.as_deref()),
                     ),
                     None => (
+                        FeatureDefaultState::NotSet,
                         FeatureDefaultState::NotSet,
                         FeatureDefaultState::NotSet,
                         FeatureDefaultState::NotSet,
@@ -342,10 +370,12 @@ impl OrgContext {
                 FeatureDefaultState::Unknown,
                 FeatureDefaultState::Unknown,
                 FeatureDefaultState::Unknown,
+                FeatureDefaultState::Unknown,
             ),
         };
 
         Ok(Self {
+            plan,
             two_factor_required,
             members_without_2fa,
             outside_collaborators,
@@ -363,31 +393,6 @@ impl OrgContext {
             rulesets,
         })
     }
-}
-
-#[derive(Deserialize)]
-struct OrgPvrResponse {
-    enabled_for_new_repositories: Option<bool>,
-}
-
-async fn fetch_org_private_vulnerability_reporting(
-    client: &impl GitHubClient,
-    org: &str,
-) -> Result<FeatureState> {
-    Ok(
-        match client
-            .get_json::<OrgPvrResponse>(&format!("/orgs/{org}/private-vulnerability-reporting"))
-            .await?
-        {
-            Fetch::Ok(r) => match r.enabled_for_new_repositories {
-                Some(true) => FeatureState::Enabled,
-                Some(false) => FeatureState::Disabled,
-                None => FeatureState::Unknown,
-            },
-            Fetch::NotFound => FeatureState::Disabled,
-            Fetch::Forbidden => FeatureState::Unknown,
-        },
-    )
 }
 
 #[derive(Deserialize)]

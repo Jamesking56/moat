@@ -226,6 +226,8 @@ pub struct CheckResult {
     pub summary: String,
     pub state_note: Option<String>,
     pub affected_repos: Vec<String>,
+    pub affected_repo_branches: Vec<Option<String>>,
+    pub affected_repo_release_branches: Vec<Vec<String>>,
     pub org_default_issue: bool,
     pub org_only_issue: bool,
 }
@@ -243,7 +245,7 @@ pub fn run_checks(ctx: &CheckContext<'_>) -> Vec<CheckResult> {
 
     CHECKS
         .iter()
-        .filter(|c| scope_matches(c.scope(), ctx))
+        .filter(|c| scope_matches(c.scope(), ctx) && (!c.org_only || ctx.org.is_some()))
         .map(|check| evaluate(check, ctx, active_total))
         .collect()
 }
@@ -262,6 +264,8 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
     };
 
     let mut affected: Vec<String> = Vec::new();
+    let mut affected_branches: Vec<Option<String>> = Vec::new();
+    let mut affected_release_branches: Vec<Vec<String>> = Vec::new();
     let mut repo_pass = 0usize;
     let mut repo_skipped = 0usize;
     let mut repo_warned = 0usize;
@@ -286,7 +290,20 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
             repo_applicable += 1;
             let outcome = f(r);
             match outcome.status {
-                Status::Fail => affected.push(r.name.clone()),
+                Status::Fail => {
+                    affected.push(r.name.clone());
+                    affected_branches.push(r.default_branch.clone());
+                    let release = if check.ruleset_based {
+                        r.branch_protections
+                            .branches
+                            .iter()
+                            .map(|(name, _)| name.clone())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    affected_release_branches.push(release);
+                }
                 Status::Pass => repo_pass += 1,
                 Status::Warn => repo_warned += 1,
                 Status::Skipped => repo_skipped += 1,
@@ -294,8 +311,27 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         }
     }
 
-    let org_failed = matches!(org_outcome.as_ref().map(|o| o.status), Some(Status::Fail));
-    let org_warned = matches!(org_outcome.as_ref().map(|o| o.status), Some(Status::Warn));
+    let plan_free = ctx
+        .org
+        .map(|o| o.plan == crate::checks::org_context::OrgPlan::Free)
+        .unwrap_or(false);
+    let mut org_failed = matches!(org_outcome.as_ref().map(|o| o.status), Some(Status::Fail));
+    let mut org_warned = matches!(org_outcome.as_ref().map(|o| o.status), Some(Status::Warn));
+    // On Free-plan orgs, suppress org-default findings for ruleset-based
+    // checks only — org rulesets require Team/Enterprise to enforce, so the
+    // org-level default is not actionable on Free. Non-ruleset org settings
+    // (e.g. Actions workflow token defaults) remain configurable on Free and
+    // must keep failing. Pure org-only checks (e.g. 2FA) have no repo_eval
+    // and are never suppressed.
+    let default_policy_only = check.ruleset_based
+        && check.repo_eval.is_some()
+        && (org_failed || org_warned)
+        && affected.is_empty()
+        && repo_warned == 0;
+    if plan_free && default_policy_only {
+        org_failed = false;
+        org_warned = false;
+    }
     let org_passed = matches!(org_outcome.as_ref().map(|o| o.status), Some(Status::Pass));
     let org_skipped = matches!(
         org_outcome.as_ref().map(|o| o.status),
@@ -351,6 +387,8 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         summary,
         state_note,
         affected_repos: affected,
+        affected_repo_branches: affected_branches,
+        affected_repo_release_branches: affected_release_branches,
         org_default_issue: org_failed || org_warned,
         org_only_issue,
     }
@@ -581,51 +619,26 @@ pub fn render_checks_panel(
 
         panel::blank();
 
-        let raw_path = r.check.how_to_fix.replace("→", "›");
-        let (org_part, repo_part) = split_how_to_fix(&raw_path);
-        let has_repo_failures = !r.affected_repos.is_empty();
-        let show_org = r.org_default_issue;
-        let show_repo = has_repo_failures && repo_part.is_some();
-        let show_generic =
-            !show_org && !show_repo && matches!(r.status, Status::Fail | Status::Warn);
-
-        let mut wrote_section = false;
-        if show_org {
-            let header = if show_repo {
-                "Fix the default policy (applies to new repositories):"
-            } else {
+        if matches!(r.status, Status::Fail | Status::Warn) {
+            let header = if r.org_default_issue {
                 "Fix the default policy:"
+            } else {
+                "How to fix:"
             };
             let head = panel::Line::new().space(5).styled(header, panel::text_bold);
             panel::row(head);
-            for line in panel::wrap(org_part, text_width.saturating_sub(2)) {
-                let l = panel::Line::new().space(7).styled(&line, panel::info);
-                panel::row(l);
-            }
-            wrote_section = true;
-        }
-        if show_repo && let Some(rp) = repo_part {
-            if wrote_section {
-                panel::blank();
-            }
-            let head = panel::Line::new()
-                .space(5)
-                .styled("Fix each affected repository:", panel::text_bold);
-            panel::row(head);
-            for line in panel::wrap(rp, text_width.saturating_sub(2)) {
-                let l = panel::Line::new().space(7).styled(&line, panel::info);
-                panel::row(l);
-            }
-        }
-        if show_generic {
-            let head = panel::Line::new()
-                .space(5)
-                .styled("How to fix:", panel::text_bold);
-            panel::row(head);
-            for line in panel::wrap(org_part, text_width.saturating_sub(2)) {
-                let l = panel::Line::new().space(7).styled(&line, panel::info);
-                panel::row(l);
-            }
+            let repo = r.affected_repos.first().map(|s| s.as_str());
+            let mut branches: Vec<String> = r
+                .affected_repo_release_branches
+                .iter()
+                .flatten()
+                .cloned()
+                .collect();
+            branches.sort();
+            branches.dedup();
+            let fix_text = substitute_fix_template(r.check.how_to_fix, account, repo, &branches);
+            let hyperlinks = std::io::IsTerminal::is_terminal(&std::io::stdout());
+            render_fix_block(&fix_text, text_width.saturating_sub(2), hyperlinks);
         }
 
         let is_finding = matches!(r.status, Status::Fail | Status::Warn);
@@ -639,6 +652,28 @@ pub fn render_checks_panel(
             };
             for line in panel::wrap(note, text_width) {
                 let l = panel::Line::new().space(5).styled(&line, panel::accent);
+                panel::row(l);
+            }
+        }
+
+        let plan_free = org
+            .map(|o| o.plan == crate::checks::org_context::OrgPlan::Free)
+            .unwrap_or(false);
+        let rules_link = is_finding && r.check.ruleset_based && plan_free;
+        if rules_link {
+            panel::blank();
+            let note = "Organization rulesets require GitHub Team or Enterprise to enforce — on the Free plan, the rules above are saved but not applied. Either upgrade the organization, or apply equivalent rules per-repo.";
+            for line in panel::wrap(note, text_width) {
+                let l = panel::Line::new().space(5).styled(&line, panel::warning);
+                panel::row(l);
+            }
+        }
+
+        if is_finding && r.check.ruleset_based {
+            panel::blank();
+            let note = "Strict enforcement can create friction — for example, a solo maintainer can be blocked from merging their own changes. If that's your situation, configure this ruleset's Bypass list to choose which roles, teams, GitHub Apps, or users may bypass it, rather than weakening the rule for everyone.";
+            for line in panel::wrap(note, text_width) {
+                let l = panel::Line::new().space(5).styled(&line, panel::warning);
                 panel::row(l);
             }
         }
@@ -667,35 +702,36 @@ pub fn render_checks_panel(
             let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
             panel::row(l);
 
-            let longest = r
-                .affected_repos
-                .iter()
-                .map(|n| n.chars().count())
-                .max()
-                .unwrap_or(0);
-            let col_w = longest.max(12) + 2;
-            let grid_width = text_width.saturating_sub(2);
-            let cols = (grid_width / col_w).max(1);
+            let hyperlinks = std::io::IsTerminal::is_terminal(&std::io::stdout());
+            let path = if rules_link {
+                Some("/settings/rules")
+            } else {
+                r.check.repo_link_path
+            };
 
             let max_rows = 4usize;
-            let cap = cols * max_rows;
-            let show = if verbose || total <= cap { total } else { cap };
-            let hyperlinks = std::io::IsTerminal::is_terminal(&std::io::stdout());
-
-            for chunk in r.affected_repos[..show].chunks(cols) {
-                let mut line = panel::Line::new().space(7);
-                for name in chunk {
-                    let url = format!("https://github.com/{account}/{name}");
-                    let styled = panel::text(name);
-                    let cell = if hyperlinks {
-                        format!("\x1b]8;;{url}\x1b\\{styled}\x1b]8;;\x1b\\")
-                    } else {
-                        styled
-                    };
-                    line = line.raw(name, &cell);
-                    let pad = col_w.saturating_sub(name.chars().count());
-                    line = line.space(pad);
-                }
+            let show = if verbose || total <= max_rows {
+                total
+            } else {
+                max_rows
+            };
+            for (idx, name) in r.affected_repos[..show].iter().enumerate() {
+                let branch = r
+                    .affected_repo_branches
+                    .get(idx)
+                    .and_then(|b| b.as_deref())
+                    .unwrap_or("HEAD");
+                let suffix = path
+                    .map(|p| p.replace("{branch}", branch))
+                    .unwrap_or_default();
+                let url = format!("https://github.com/{account}/{name}{suffix}");
+                let styled = panel::text(&url);
+                let cell = if hyperlinks {
+                    format!("\x1b]8;;{url}\x1b\\{styled}\x1b]8;;\x1b\\")
+                } else {
+                    styled
+                };
+                let line = panel::Line::new().space(7).raw(&url, &cell);
                 panel::row(line);
             }
             if show < total {
@@ -754,17 +790,176 @@ fn render_member_block(title: &str, list: &MemberList, text_width: usize, verbos
     }
 }
 
-fn split_how_to_fix(path: &str) -> (&str, Option<&str>) {
-    let marker = "(per-repo:";
-    if let Some(open) = path.find(marker) {
-        let org = path[..open].trim_end().trim_end_matches('.').trim_end();
-        let after = &path[open + marker.len()..];
-        let inner = match after.rfind(')') {
-            Some(close) => after[..close].trim(),
-            None => after.trim(),
-        };
-        (org, Some(inner))
+fn substitute_fix_template(
+    template: &str,
+    account: &str,
+    repo: Option<&str>,
+    branches: &[String],
+) -> String {
+    let with_org = template.replace("{org}", account);
+    let with_repo = match repo {
+        Some(r) => with_org.replace("{repo}", r),
+        None => with_org,
+    };
+    let branches_text = if branches.is_empty() {
+        "Default + release branches".to_string()
     } else {
-        (path.trim_end_matches('.').trim_end(), None)
+        branches.join(", ")
+    };
+    with_repo.replace("{branches}", &branches_text)
+}
+
+#[derive(Debug)]
+enum Atom<'a> {
+    Plain(&'a str),
+    Url(&'a str),
+    Underline(&'a str),
+}
+
+fn parse_fix_atoms(s: &str) -> Vec<Atom<'_>> {
+    let mut atoms = Vec::new();
+    let mut rest = s;
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            break;
+        }
+        if let Some(after) = rest.strip_prefix("__")
+            && let Some(end) = after.find("__")
+        {
+            atoms.push(Atom::Underline(&after[..end]));
+            rest = &after[end + 2..];
+            continue;
+        }
+        if rest.starts_with("https://") || rest.starts_with("http://") {
+            let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+            atoms.push(Atom::Url(&rest[..end]));
+            rest = &rest[end..];
+            continue;
+        }
+        let mut end = rest.len();
+        for (i, _) in rest.char_indices() {
+            if i == 0 {
+                continue;
+            }
+            let cur = &rest[i..];
+            if cur.starts_with(|c: char| c.is_whitespace())
+                || cur.starts_with("__")
+                || cur.starts_with("http://")
+                || cur.starts_with("https://")
+            {
+                end = i;
+                break;
+            }
+        }
+        atoms.push(Atom::Plain(&rest[..end]));
+        rest = &rest[end..];
     }
+    atoms
+}
+
+fn atom_visible<'a>(a: &'a Atom<'a>) -> &'a str {
+    match a {
+        Atom::Plain(s) | Atom::Url(s) | Atom::Underline(s) => s,
+    }
+}
+
+fn render_atom(a: &Atom<'_>, hyperlinks: bool) -> String {
+    match a {
+        Atom::Plain(s) => panel::info(s),
+        Atom::Url(u) => {
+            let styled = panel::info_underline(u);
+            if hyperlinks {
+                format!("\x1b]8;;{u}\x1b\\{styled}\x1b]8;;\x1b\\")
+            } else {
+                styled
+            }
+        }
+        Atom::Underline(s) => panel::info_underline(s),
+    }
+}
+
+fn render_fix_block(text: &str, width: usize, hyperlinks: bool) {
+    for (i, segment) in split_fences(text).into_iter().enumerate() {
+        match segment {
+            FixSegment::Prose(s) => render_fix_prose(s, width, hyperlinks),
+            FixSegment::Code(lines) => {
+                if i > 0 {
+                    panel::blank();
+                }
+                for line in lines {
+                    let l = panel::Line::new().styled(line, panel::muted);
+                    panel::raw_line(l);
+                }
+                panel::blank();
+            }
+        }
+    }
+}
+
+enum FixSegment<'a> {
+    Prose(&'a str),
+    Code(Vec<&'a str>),
+}
+
+fn split_fences(text: &str) -> Vec<FixSegment<'_>> {
+    let mut out: Vec<FixSegment<'_>> = Vec::new();
+    let mut rest = text;
+    while let Some(open) = rest.find("```") {
+        let prose = &rest[..open];
+        if !prose.trim().is_empty() {
+            out.push(FixSegment::Prose(prose));
+        }
+        let after_open = &rest[open + 3..];
+        let body_start = after_open.find('\n').map(|n| n + 1).unwrap_or(0);
+        let body = &after_open[body_start..];
+        if let Some(close) = body.find("```") {
+            let code = &body[..close];
+            let lines: Vec<&str> = code.trim_end_matches('\n').split('\n').collect();
+            out.push(FixSegment::Code(lines));
+            rest = &body[close + 3..];
+        } else {
+            out.push(FixSegment::Prose(rest));
+            return out;
+        }
+    }
+    if !rest.trim().is_empty() {
+        out.push(FixSegment::Prose(rest));
+    }
+    out
+}
+
+fn render_fix_prose(text: &str, width: usize, hyperlinks: bool) {
+    let atoms = parse_fix_atoms(text);
+    let mut line_atoms: Vec<&Atom<'_>> = Vec::new();
+    let mut line_w = 0usize;
+
+    let flush = |line_atoms: &[&Atom<'_>]| {
+        if line_atoms.is_empty() {
+            return;
+        }
+        let mut line = panel::Line::new().space(7);
+        for (i, a) in line_atoms.iter().enumerate() {
+            if i > 0 {
+                line = line.space(1);
+            }
+            line = line.raw(atom_visible(a), &render_atom(a, hyperlinks));
+        }
+        panel::row(line);
+    };
+
+    for a in &atoms {
+        let w = atom_visible(a).chars().count();
+        let sep = if line_atoms.is_empty() { 0 } else { 1 };
+        if line_w + sep + w > width && !line_atoms.is_empty() {
+            flush(&line_atoms);
+            line_atoms.clear();
+            line_atoms.push(a);
+            line_w = w;
+        } else {
+            line_atoms.push(a);
+            line_w += sep + w;
+        }
+    }
+    flush(&line_atoms);
 }
