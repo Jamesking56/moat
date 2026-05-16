@@ -29,8 +29,14 @@ use moat::checks::{
 };
 use moat::support::github::FakeGitHubClient;
 use moat::support::outcome::Status;
-use moat::support::workflows::{Workflow, WorkflowsState};
+use moat::support::workflows::{BranchedWorkflows, Workflow, WorkflowsState};
 use serde_json::json;
+
+fn bw(state: WorkflowsState) -> BranchedWorkflows {
+    BranchedWorkflows {
+        per_branch: vec![("main".into(), state)],
+    }
+}
 
 fn protected(signed_commits: bool, pr_reviews: bool) -> BranchProtectionState {
     BranchProtectionState::Protected {
@@ -59,7 +65,7 @@ fn ctx(branch: BranchProtectionState, token: WorkflowTokenState) -> RepoContext 
         dependabot_alerts: FeatureState::Enabled,
         dependabot_security_updates: FeatureState::Enabled,
         private_vulnerability_reporting: FeatureState::Enabled,
-        workflows: WorkflowsState::Loaded(Vec::new()),
+        workflows: bw(WorkflowsState::Loaded(Vec::new())),
         security_md: FilePresence::Absent,
         dependabot_config: DependabotConfigState::Missing,
         webhooks: WebhooksState::Ok(Vec::new()),
@@ -191,7 +197,7 @@ fn workflow_token_states() {
 #[test]
 fn dependabot_config_skipped_when_no_workflows() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(Vec::new());
+    c.workflows = bw(WorkflowsState::Loaded(Vec::new()));
     c.dependabot_config = DependabotConfigState::Missing;
     assert_eq!(dependabot_config::repo_check(&c).status, Status::Skipped);
 }
@@ -454,26 +460,26 @@ fn protected_full(
 }
 
 #[test]
-fn pinned_actions_enforced_short_circuits_even_with_unpinned_refs() {
+fn pinned_actions_enforced_still_flags_unpinned_refs() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.sha_pinning = SHAPinningState::Enforced;
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n",
-    )]);
+    )]));
     let o = pinned_actions::repo_check(&c);
-    assert_eq!(o.status, Status::Pass);
-    assert!(o.summary.to_ascii_lowercase().contains("enforced"));
+    assert_eq!(o.status, Status::Fail);
+    assert!(o.summary.to_ascii_lowercase().contains("unpinned"));
 }
 
 #[test]
 fn pinned_actions_not_enforced_with_all_pinned_and_workflows_reports_enforcement_off() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.sha_pinning = SHAPinningState::NotEnforced;
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@1234567890123456789012345678901234567890\n",
-    )]);
+    )]));
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert_eq!(o.summary, "✗ all pinned, but enforcement off");
@@ -484,7 +490,7 @@ fn pinned_actions_not_enforced_with_all_pinned_and_workflows_reports_enforcement
 fn pinned_actions_not_enforced_with_no_workflows_reports_enforcement_off_only() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.sha_pinning = SHAPinningState::NotEnforced;
-    c.workflows = WorkflowsState::Loaded(Vec::new());
+    c.workflows = bw(WorkflowsState::Loaded(Vec::new()));
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert_eq!(o.summary, "✗ enforcement off");
@@ -494,10 +500,10 @@ fn pinned_actions_not_enforced_with_no_workflows_reports_enforcement_off_only() 
 fn pinned_actions_not_enforced_with_unpinned_reports_combined_summary() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.sha_pinning = SHAPinningState::NotEnforced;
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n      - uses: foo/bar@main\n",
-    )]);
+    )]));
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert_eq!(o.summary, "✗ 2 unpinned + enforcement off");
@@ -507,10 +513,10 @@ fn pinned_actions_not_enforced_with_unpinned_reports_combined_summary() {
 fn pinned_actions_unknown_enforcement_with_unpinned_reports_count_only() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.sha_pinning = SHAPinningState::Unknown;
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n",
-    )]);
+    )]));
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert_eq!(o.summary, "✗ 1 unpinned");
@@ -520,7 +526,7 @@ fn pinned_actions_unknown_enforcement_with_unpinned_reports_count_only() {
 fn pinned_actions_workflows_no_permission_is_skipped() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.sha_pinning = SHAPinningState::Unknown;
-    c.workflows = WorkflowsState::NoPermission;
+    c.workflows = bw(WorkflowsState::NoPermission);
     assert_eq!(pinned_actions::repo_check(&c).status, Status::Skipped);
 }
 
@@ -528,7 +534,7 @@ fn pinned_actions_workflows_no_permission_is_skipped() {
 fn pinned_actions_no_workflows_unknown_enforcement_is_skipped() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.sha_pinning = SHAPinningState::Unknown;
-    c.workflows = WorkflowsState::Loaded(Vec::new());
+    c.workflows = bw(WorkflowsState::Loaded(Vec::new()));
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Skipped);
     assert!(o.summary.to_ascii_lowercase().contains("no workflows"));
@@ -538,10 +544,10 @@ fn pinned_actions_no_workflows_unknown_enforcement_is_skipped() {
 fn pinned_actions_all_pinned_unknown_enforcement_passes_with_caveat() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.sha_pinning = SHAPinningState::Unknown;
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@1234567890123456789012345678901234567890\n",
-    )]);
+    )]));
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Pass);
     assert!(
@@ -799,24 +805,24 @@ fn pvr_public_feature_states() {
 #[test]
 fn prt_safe_empty_workflows_skipped() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(Vec::new());
+    c.workflows = bw(WorkflowsState::Loaded(Vec::new()));
     assert_eq!(prt_safe::repo_check(&c).status, Status::Skipped);
 }
 
 #[test]
 fn prt_safe_no_permission_skipped() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::NoPermission;
+    c.workflows = bw(WorkflowsState::NoPermission);
     assert_eq!(prt_safe::repo_check(&c).status, Status::Skipped);
 }
 
 #[test]
 fn prt_safe_pull_request_target_with_untrusted_checkout_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "danger.yml",
         "on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n",
-    )]);
+    )]));
     let o = prt_safe::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -829,50 +835,50 @@ fn prt_safe_pull_request_target_with_untrusted_checkout_fails() {
 #[test]
 fn prt_safe_pull_request_target_with_head_ref_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "danger.yml",
         "on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.head_ref }}\n",
-    )]);
+    )]));
     assert_eq!(prt_safe::repo_check(&c).status, Status::Fail);
 }
 
 #[test]
 fn prt_safe_pull_request_target_case_insensitive_checkout_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "danger.yml",
         "on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: Actions/Checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n",
-    )]);
+    )]));
     assert_eq!(prt_safe::repo_check(&c).status, Status::Fail);
 }
 
 #[test]
 fn prt_safe_pull_request_target_third_party_checkout_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "danger.yml",
         "on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: some-org/checkout/v2@v2\n        with:\n          ref: ${{ github.head_ref }}\n",
-    )]);
+    )]));
     assert_eq!(prt_safe::repo_check(&c).status, Status::Fail);
 }
 
 #[test]
 fn prt_safe_pull_request_target_shell_checkout_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "danger.yml",
         "on: pull_request_target\njobs:\n  a:\n    steps:\n      - run: git fetch origin ${{ github.head_ref }} && git checkout FETCH_HEAD\n",
-    )]);
+    )]));
     assert_eq!(prt_safe::repo_check(&c).status, Status::Fail);
 }
 
 #[test]
 fn prt_safe_pull_request_target_without_checkout_passes() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "safe.yml",
         "on: pull_request_target\njobs:\n  a:\n    steps:\n      - run: echo hi\n",
-    )]);
+    )]));
     assert_eq!(prt_safe::repo_check(&c).status, Status::Pass);
 }
 
@@ -907,24 +913,24 @@ fn linear_history_repo_check_flag_routing() {
 #[test]
 fn workflow_perms_no_workflows_skipped() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(Vec::new());
+    c.workflows = bw(WorkflowsState::Loaded(Vec::new()));
     assert_eq!(workflow_perms::repo_check(&c).status, Status::Skipped);
 }
 
 #[test]
 fn workflow_perms_no_permission_skipped() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::NoPermission;
+    c.workflows = bw(WorkflowsState::NoPermission);
     assert_eq!(workflow_perms::repo_check(&c).status, Status::Skipped);
 }
 
 #[test]
 fn workflow_perms_missing_block_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n",
-    )]);
+    )]));
     let o = workflow_perms::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -937,10 +943,10 @@ fn workflow_perms_missing_block_fails() {
 #[test]
 fn workflow_perms_write_all_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\npermissions: write-all\njobs:\n  a:\n    steps:\n      - run: echo\n",
-    )]);
+    )]));
     let o = workflow_perms::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -953,10 +959,10 @@ fn workflow_perms_write_all_fails() {
 #[test]
 fn workflow_perms_scoped_write_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\npermissions:\n  contents: write\n  issues: read\njobs:\n  a:\n    steps:\n      - run: echo\n",
-    )]);
+    )]));
     let o = workflow_perms::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -969,20 +975,20 @@ fn workflow_perms_scoped_write_fails() {
 #[test]
 fn workflow_perms_read_only_passes() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\npermissions:\n  contents: read\njobs:\n  a:\n    steps:\n      - run: echo\n",
-    )]);
+    )]));
     assert_eq!(workflow_perms::repo_check(&c).status, Status::Pass);
 }
 
 #[test]
 fn workflow_perms_job_level_write_all_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\npermissions:\n  contents: read\njobs:\n  a:\n    permissions: write-all\n    steps:\n      - run: echo\n",
-    )]);
+    )]));
     let o = workflow_perms::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -996,10 +1002,10 @@ fn workflow_perms_job_level_write_all_fails() {
 #[test]
 fn workflow_perms_job_level_scoped_write_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\npermissions:\n  contents: read\njobs:\n  release:\n    permissions:\n      contents: write\n      issues: read\n    steps:\n      - run: echo\n",
-    )]);
+    )]));
     let o = workflow_perms::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -1013,10 +1019,10 @@ fn workflow_perms_job_level_scoped_write_fails() {
 #[test]
 fn workflow_perms_job_level_read_only_passes() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = WorkflowsState::Loaded(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\npermissions:\n  contents: read\njobs:\n  a:\n    permissions:\n      contents: read\n    steps:\n      - run: echo\n",
-    )]);
+    )]));
     assert_eq!(workflow_perms::repo_check(&c).status, Status::Pass);
 }
 

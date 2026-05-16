@@ -2,21 +2,15 @@ use crate::checks::StateCtx;
 use crate::checks::common::{noun, repos_word};
 use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
-use crate::support::workflows::{self, PermissionsBlock, WorkflowsState};
+use crate::support::workflows::{self, PermissionsBlock, Workflow, WorkflowsState};
 
 pub const LABEL: &str = "Repositories workflow permissions are restricted";
-pub const HOW_TO_FIX: &str = "In each `.github/workflows/*.yml`, add a top-level `permissions:` block listing only the scopes the workflow actually needs. For most read-only workflows that is:\n```yaml\npermissions:\n  contents: read\n```";
+pub const HOW_TO_FIX: &str = "In each `.github/workflows/*.yml` below > __Add__ -> A top-level `permissions:` block > __Set__ -> The minimum scopes needed — for read-only workflows:\n```yaml\npermissions:\n  contents: read\n```";
 pub const WHY_ENABLE: &str = "Without a declared `permissions:` block (or with `write-all`), every step in the workflow — including third-party actions — runs with full repo write access, turning any compromised action into a code-push primitive.";
 
-pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
-    let workflows = match &ctx.workflows {
-        WorkflowsState::Loaded(w) if w.is_empty() => return CheckOutcome::skipped("N/a"),
-        WorkflowsState::Loaded(w) => w,
-        WorkflowsState::NoPermission => return CheckOutcome::skipped("?"),
-    };
-
+fn findings_for_workflows(wfs: &[Workflow]) -> Vec<String> {
     let mut findings: Vec<String> = Vec::new();
-    for wf in workflows {
+    for wf in wfs {
         match workflows::top_level_permissions(&wf.doc) {
             PermissionsBlock::Missing => {
                 findings.push(format!("{}: missing permissions block", wf.path))
@@ -44,11 +38,61 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
             }
         }
     }
+    findings
+}
 
-    if findings.is_empty() {
+pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
+    if ctx.workflows.is_empty() {
+        return CheckOutcome::skipped("—");
+    }
+
+    let mut any_loaded = false;
+    let mut any_non_empty = false;
+    let mut all_no_permission = true;
+    for (_, state) in ctx.workflows.iter() {
+        match state {
+            WorkflowsState::Loaded(w) => {
+                all_no_permission = false;
+                any_loaded = true;
+                if !w.is_empty() {
+                    any_non_empty = true;
+                }
+            }
+            WorkflowsState::NoPermission => {}
+        }
+    }
+    if all_no_permission {
+        return CheckOutcome::skipped("?");
+    }
+    if any_loaded && !any_non_empty {
+        return CheckOutcome::skipped("N/a");
+    }
+
+    let multi = ctx.workflows.len() > 1;
+    let mut all_findings: Vec<String> = Vec::new();
+    let mut failing_branches: Vec<String> = Vec::new();
+    for (branch, state) in ctx.workflows.iter() {
+        let WorkflowsState::Loaded(wfs) = state else {
+            continue;
+        };
+        let findings = findings_for_workflows(wfs);
+        if findings.is_empty() {
+            continue;
+        }
+        if !failing_branches.contains(branch) {
+            failing_branches.push(branch.clone());
+        }
+        for f in findings {
+            all_findings.push(if multi { format!("{branch}: {f}") } else { f });
+        }
+    }
+
+    if all_findings.is_empty() {
         CheckOutcome::pass("✓")
     } else {
-        CheckOutcome::fail("✗").with_items(findings)
+        CheckOutcome::fail("✗")
+            .with_items(all_findings)
+            .with_failing_branches(failing_branches)
     }
 }
 
@@ -57,12 +101,15 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
     let mut bad_repos = 0usize;
     let mut applicable = 0usize;
     for r in ctx.repos {
-        if let WorkflowsState::Loaded(wfs) = &r.workflows {
-            if wfs.is_empty() {
+        if !r.workflows.has_any_workflows() {
+            continue;
+        }
+        applicable += 1;
+        let mut repo_bad = 0usize;
+        for (_, state) in r.workflows.iter() {
+            let WorkflowsState::Loaded(wfs) = state else {
                 continue;
-            }
-            applicable += 1;
-            let mut repo_bad = 0usize;
+            };
             for wf in wfs {
                 let top_bad = match workflows::top_level_permissions(&wf.doc) {
                     PermissionsBlock::Missing | PermissionsBlock::WriteAll => true,
@@ -80,10 +127,10 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
                     repo_bad += 1;
                 }
             }
-            if repo_bad > 0 {
-                bad_repos += 1;
-                total_bad += repo_bad;
-            }
+        }
+        if repo_bad > 0 {
+            bad_repos += 1;
+            total_bad += repo_bad;
         }
     }
 
@@ -97,7 +144,7 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
         )
     } else {
         format!(
-            "{total_bad} {} grant write or omit the permissions block across {bad_repos}/{applicable} {}",
+            "{total_bad} {} grant write or omit the permissions block across {bad_repos}/{applicable} {} with workflows",
             noun(total_bad, "workflow", "workflows"),
             repos_word(applicable)
         )

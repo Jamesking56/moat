@@ -9,24 +9,61 @@ pub const HOW_TO_FIX: &str = "Switch the trigger to `pull_request`, or ensure th
 pub const WHY_ENABLE: &str = "`pull_request_target` runs with the base repo's secrets and write token; if the workflow then checks out the PR's code, any fork PR executes attacker-controlled code with full repo privileges.";
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
-    let workflows = match &ctx.workflows {
-        WorkflowsState::Loaded(w) if w.is_empty() => return CheckOutcome::skipped("N/a"),
-        WorkflowsState::Loaded(w) => w,
-        WorkflowsState::NoPermission => return CheckOutcome::skipped("?"),
-    };
+    if ctx.workflows.is_empty() {
+        return CheckOutcome::skipped("—");
+    }
 
+    let mut any_loaded = false;
+    let mut any_non_empty = false;
+    let mut all_no_permission = true;
+    for (_, state) in ctx.workflows.iter() {
+        match state {
+            WorkflowsState::Loaded(w) => {
+                all_no_permission = false;
+                any_loaded = true;
+                if !w.is_empty() {
+                    any_non_empty = true;
+                }
+            }
+            WorkflowsState::NoPermission => {}
+        }
+    }
+    if all_no_permission {
+        return CheckOutcome::skipped("?");
+    }
+    if any_loaded && !any_non_empty {
+        return CheckOutcome::skipped("N/a");
+    }
+
+    let multi = ctx.workflows.len() > 1;
     let mut bad: Vec<String> = Vec::new();
-    for wf in workflows {
-        if workflows::has_pull_request_target(&wf.doc) && workflows::has_untrusted_checkout(&wf.doc)
-        {
-            bad.push(wf.path.clone());
+    let mut failing_branches: Vec<String> = Vec::new();
+    for (branch, state) in ctx.workflows.iter() {
+        let WorkflowsState::Loaded(wfs) = state else {
+            continue;
+        };
+        let mut branch_bad: Vec<String> = Vec::new();
+        for wf in wfs {
+            if workflows::has_pull_request_target(&wf.doc)
+                && workflows::has_untrusted_checkout(&wf.doc)
+            {
+                branch_bad.push(wf.path.clone());
+            }
+        }
+        if !branch_bad.is_empty() && !failing_branches.contains(branch) {
+            failing_branches.push(branch.clone());
+        }
+        for f in branch_bad {
+            bad.push(if multi { format!("{branch}: {f}") } else { f });
         }
     }
 
     if bad.is_empty() {
         CheckOutcome::pass("✓")
     } else {
-        CheckOutcome::fail("✗").with_items(bad)
+        CheckOutcome::fail("✗")
+            .with_items(bad)
+            .with_failing_branches(failing_branches)
     }
 }
 
@@ -35,12 +72,15 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
     let mut bad_repos = 0usize;
     let mut applicable = 0usize;
     for r in ctx.repos {
-        if let WorkflowsState::Loaded(wfs) = &r.workflows {
-            if wfs.is_empty() {
+        if !r.workflows.has_any_workflows() {
+            continue;
+        }
+        applicable += 1;
+        let mut repo_bad = 0usize;
+        for (_, state) in r.workflows.iter() {
+            let WorkflowsState::Loaded(wfs) = state else {
                 continue;
-            }
-            applicable += 1;
-            let mut repo_bad = 0usize;
+            };
             for wf in wfs {
                 if workflows::has_pull_request_target(&wf.doc)
                     && workflows::has_untrusted_checkout(&wf.doc)
@@ -48,10 +88,10 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
                     repo_bad += 1;
                 }
             }
-            if repo_bad > 0 {
-                bad_repos += 1;
-                total_bad += repo_bad;
-            }
+        }
+        if repo_bad > 0 {
+            bad_repos += 1;
+            total_bad += repo_bad;
         }
     }
 
@@ -65,7 +105,7 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
         )
     } else {
         format!(
-            "{total_bad} {} combine `pull_request_target` with an untrusted checkout across {bad_repos}/{applicable} {}",
+            "{total_bad} {} combine `pull_request_target` with an untrusted checkout across {bad_repos}/{applicable} {} with workflows",
             noun(total_bad, "workflow", "workflows"),
             repos_word(applicable)
         )

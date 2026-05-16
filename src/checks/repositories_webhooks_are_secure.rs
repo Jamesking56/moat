@@ -49,12 +49,13 @@ fn count_insecure(hooks: &[WebhookInfo]) -> usize {
 }
 
 pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
-    let total = ctx.repos.len();
+    let mut total = 0usize;
     let mut bad_repos = 0usize;
     let mut repo_hook_total = 0usize;
     let mut repo_insecure = 0usize;
     for r in ctx.repos {
         if let WebhooksState::Ok(v) = &r.webhooks {
+            total += 1;
             repo_hook_total += v.len();
             let bad = count_insecure(v);
             repo_insecure += bad;

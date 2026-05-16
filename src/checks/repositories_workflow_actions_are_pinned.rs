@@ -5,31 +5,46 @@ use crate::support::outcome::CheckOutcome;
 use crate::support::workflows::{self, WorkflowsState};
 
 pub const LABEL: &str = "Repositories workflow actions are pinned";
-pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/actions > General actions permissions > __Check__ -> Require actions to be pinned to a full-length commit SHA > __Click__ -> Save";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/actions > General actions permissions > __Check__ -> Require actions to be pinned to a full-length commit SHA > __Click__ -> Save\n\nThen, in each affected workflow file below, replace every tag or branch ref with the full-length commit SHA (keep the tag as a trailing comment for readability). For example:\n```diff\n    - name: Cache dependencies\n-      uses: actions/cache@v5\n+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5\n```\nTip: hand the file list to your coding agent and ask it to pin every `uses:` ref — it can resolve each tag to its commit SHA for you.";
 pub const WHY_ENABLE: &str = "Tags and branches are mutable — when tj-actions/changed-files was compromised in 2025, the attacker repointed the existing tags, so every workflow `@v1` instantly ran malicious code; SHA pins make that impossible, and the repo-level \"Require actions to be pinned\" setting prevents anyone from re-introducing unpinned refs. Note: enforcement happens at workflow run time — a push with unpinned `uses:` refs is not rejected, but any workflow it triggers will fail to start until the refs are pinned.";
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     let enforced = matches!(ctx.sha_pinning, SHAPinningState::Enforced);
     let not_enforced = matches!(ctx.sha_pinning, SHAPinningState::NotEnforced);
 
+    let multi = ctx.workflows.len() > 1;
     let mut unpinned: Vec<String> = Vec::new();
-    let mut workflows_unknown = false;
+    let mut failing_branches: Vec<String> = Vec::new();
+    let mut workflows_unknown_all = !ctx.workflows.is_empty();
     let mut has_workflows = false;
-    match &ctx.workflows {
-        WorkflowsState::Loaded(wfs) => {
-            has_workflows = !wfs.is_empty();
-            for wf in wfs {
-                for uses in workflows::collect_uses(&wf.doc) {
-                    if !workflows::is_pinned(&uses) {
-                        unpinned.push(format!("unpinned ref — {}: {}", wf.path, uses));
+
+    for (branch, state) in ctx.workflows.iter() {
+        match state {
+            WorkflowsState::Loaded(wfs) => {
+                workflows_unknown_all = false;
+                if !wfs.is_empty() {
+                    has_workflows = true;
+                }
+                let mut branch_unpinned: Vec<String> = Vec::new();
+                for wf in wfs {
+                    for uses in workflows::collect_uses(&wf.doc) {
+                        if !workflows::is_pinned(&uses) {
+                            branch_unpinned.push(format!("unpinned ref — {}: {}", wf.path, uses));
+                        }
                     }
                 }
+                if !branch_unpinned.is_empty() && !failing_branches.contains(branch) {
+                    failing_branches.push(branch.clone());
+                }
+                for f in branch_unpinned {
+                    unpinned.push(if multi { format!("{branch}: {f}") } else { f });
+                }
             }
+            WorkflowsState::NoPermission => {}
         }
-        WorkflowsState::NoPermission => workflows_unknown = true,
     }
 
-    if enforced {
+    if enforced && unpinned.is_empty() {
         return CheckOutcome::pass("✓ enforced via repo setting");
     }
 
@@ -49,10 +64,14 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
             (true, n) => format!("✗ {n} unpinned + enforcement off"),
             (false, n) => format!("✗ {n} unpinned"),
         };
-        return CheckOutcome::fail(summary).with_items(items);
+        let mut outcome = CheckOutcome::fail(summary).with_items(items);
+        if !failing_branches.is_empty() {
+            outcome = outcome.with_failing_branches(failing_branches);
+        }
+        return outcome;
     }
 
-    if workflows_unknown {
+    if workflows_unknown_all {
         return CheckOutcome::skipped("?");
     }
     if !has_workflows {
@@ -70,7 +89,7 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
     for r in ctx.repos {
         let enforced = matches!(r.sha_pinning, SHAPinningState::Enforced);
         let not_enforced = matches!(r.sha_pinning, SHAPinningState::NotEnforced);
-        let has_workflows = matches!(&r.workflows, WorkflowsState::Loaded(w) if !w.is_empty());
+        let has_workflows = r.workflows.has_any_workflows();
 
         if !enforced && !not_enforced && !has_workflows {
             continue;
@@ -79,18 +98,19 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
         applicable += 1;
         if enforced {
             enforced_repos += 1;
-            continue;
         }
         if not_enforced {
             not_enforced_repos += 1;
         }
 
         let mut repo_unpinned = 0usize;
-        if let WorkflowsState::Loaded(wfs) = &r.workflows {
-            for wf in wfs {
-                for uses in workflows::collect_uses(&wf.doc) {
-                    if !workflows::is_pinned(&uses) {
-                        repo_unpinned += 1;
+        for (_, state) in r.workflows.iter() {
+            if let WorkflowsState::Loaded(wfs) = state {
+                for wf in wfs {
+                    for uses in workflows::collect_uses(&wf.doc) {
+                        if !workflows::is_pinned(&uses) {
+                            repo_unpinned += 1;
+                        }
                     }
                 }
             }
@@ -113,7 +133,7 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
             )
         } else {
             format!(
-                "every workflow action is SHA-pinned across all {applicable} {}",
+                "every workflow action is SHA-pinned across all {applicable} {} with workflows",
                 repos_word(applicable)
             )
         }
@@ -122,9 +142,15 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
             "{not_enforced_repos}/{applicable} {} don't enforce SHA pinning at the repo level",
             repos_word(applicable)
         )
+    } else if not_enforced_repos > 0 {
+        format!(
+            "{total_unpinned} unpinned {} across {bad_repos}/{applicable} {} with workflows ({not_enforced_repos} also don't enforce it at the repo level)",
+            noun(total_unpinned, "action reference", "action references"),
+            repos_word(applicable)
+        )
     } else {
         format!(
-            "{total_unpinned} unpinned {} across {bad_repos}/{applicable} {} ({not_enforced_repos} also don't enforce it at the repo level)",
+            "{total_unpinned} unpinned {} across {bad_repos}/{applicable} {} with workflows",
             noun(total_unpinned, "action reference", "action references"),
             repos_word(applicable)
         )

@@ -360,7 +360,7 @@ pub static CHECKS: &[Check] = &[
         applies_to_repo: None,
         org_only: false,
         ruleset_based: false,
-        repo_link_path: None,
+        repo_link_path: Some("/tree/{branch}/.github/workflows"),
     },
     Check {
         id: "repositories_pull_request_target_is_safe",
@@ -373,7 +373,7 @@ pub static CHECKS: &[Check] = &[
         applies_to_repo: Some(public_only),
         org_only: false,
         ruleset_based: false,
-        repo_link_path: None,
+        repo_link_path: Some("/tree/{branch}/.github/workflows"),
     },
     Check {
         id: "repositories_workflow_permissions_are_restricted",

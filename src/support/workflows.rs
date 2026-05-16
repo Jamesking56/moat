@@ -26,8 +26,9 @@ pub async fn fetch_workflows(
     client: &impl GitHubClient,
     owner: &str,
     repo: &str,
+    branch: &str,
 ) -> Result<WorkflowsState> {
-    let listing_path = format!("/repos/{owner}/{repo}/contents/.github/workflows");
+    let listing_path = format!("/repos/{owner}/{repo}/contents/.github/workflows?ref={branch}");
     let entries: Vec<ContentEntry> =
         match client.get_json::<Vec<ContentEntry>>(&listing_path).await? {
             Fetch::Ok(v) => v,
@@ -47,7 +48,7 @@ pub async fn fetch_workflows(
         .collect();
 
     let raws = try_join_all(candidates.iter().map(|entry| {
-        let raw_path = format!("/repos/{owner}/{repo}/contents/{}", entry.path);
+        let raw_path = format!("/repos/{owner}/{repo}/contents/{}?ref={branch}", entry.path);
         async move { client.get_raw(&raw_path).await }
     }))
     .await?;
@@ -68,6 +69,73 @@ pub async fn fetch_workflows(
         });
     }
     Ok(WorkflowsState::Loaded(out))
+}
+
+#[derive(Default)]
+pub struct BranchedWorkflows {
+    pub per_branch: Vec<(String, WorkflowsState)>,
+}
+
+impl BranchedWorkflows {
+    pub fn empty() -> Self {
+        Self {
+            per_branch: Vec::new(),
+        }
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, (String, WorkflowsState)> {
+        self.per_branch.iter()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.per_branch.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.per_branch.len()
+    }
+
+    /// True if at least one branch has a loaded, non-empty set of workflows.
+    pub fn has_any_workflows(&self) -> bool {
+        self.per_branch
+            .iter()
+            .any(|(_, s)| matches!(s, WorkflowsState::Loaded(w) if !w.is_empty()))
+    }
+
+    /// True if every loaded branch reported zero workflow files (e.g. no
+    /// `.github/workflows` directory anywhere). Branches that are NoPermission
+    /// are ignored. Returns false if there are no branches tracked at all.
+    pub fn all_branches_empty(&self) -> bool {
+        if self.per_branch.is_empty() {
+            return false;
+        }
+        let mut any_loaded = false;
+        for (_, s) in &self.per_branch {
+            if let WorkflowsState::Loaded(w) = s {
+                any_loaded = true;
+                if !w.is_empty() {
+                    return false;
+                }
+            }
+        }
+        any_loaded
+    }
+}
+
+pub async fn fetch_workflows_for_branches(
+    client: &impl GitHubClient,
+    owner: &str,
+    repo: &str,
+    branches: &[String],
+) -> Result<BranchedWorkflows> {
+    let results = try_join_all(branches.iter().map(|branch| async move {
+        let state = fetch_workflows(client, owner, repo, branch).await?;
+        Ok::<_, anyhow::Error>((branch.clone(), state))
+    }))
+    .await?;
+    Ok(BranchedWorkflows {
+        per_branch: results,
+    })
 }
 
 /// Recursively collect every `uses:` string value found in the workflow document.

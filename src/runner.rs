@@ -291,18 +291,26 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
             let outcome = f(r);
             match outcome.status {
                 Status::Fail => {
-                    affected.push(r.name.clone());
-                    affected_branches.push(r.default_branch.clone());
-                    let release = if check.ruleset_based {
-                        r.branch_protections
-                            .branches
-                            .iter()
-                            .map(|(name, _)| name.clone())
-                            .collect()
+                    if !outcome.failing_branches.is_empty() {
+                        for branch in &outcome.failing_branches {
+                            affected.push(r.name.clone());
+                            affected_branches.push(Some(branch.clone()));
+                            affected_release_branches.push(Vec::new());
+                        }
                     } else {
-                        Vec::new()
-                    };
-                    affected_release_branches.push(release);
+                        affected.push(r.name.clone());
+                        affected_branches.push(r.default_branch.clone());
+                        let release = if check.ruleset_based {
+                            r.branch_protections
+                                .branches
+                                .iter()
+                                .map(|(name, _)| name.clone())
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
+                        affected_release_branches.push(release);
+                    }
                 }
                 Status::Pass => repo_pass += 1,
                 Status::Warn => repo_warned += 1,
@@ -342,7 +350,11 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
     let any_repo_warn = repo_warned > 0;
     let any_repo_pass = repo_pass > 0;
 
-    let repo_with_signal = repo_pass + repo_warned + affected.len();
+    let distinct_failing_repos = {
+        let mut seen = std::collections::HashSet::new();
+        affected.iter().filter(|n| seen.insert(n.as_str())).count()
+    };
+    let repo_with_signal = repo_pass + repo_warned + distinct_failing_repos;
     let all_repos_disabled =
         check.repo_eval.is_some() && repo_with_signal == 0 && repo_disabled > 0;
 
@@ -369,8 +381,8 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
     let summary = build_summary(
         check,
         &org_outcome,
-        affected.len(),
-        repo_applicable,
+        distinct_failing_repos,
+        repo_applicable.saturating_sub(repo_skipped),
         status,
         active_total,
         org_only_issue,
@@ -626,11 +638,7 @@ pub fn render_checks_panel(
         let rules_link = is_finding && r.check.ruleset_based && plan_free;
 
         if is_finding {
-            let header = if r.org_default_issue {
-                "Fix the default policy:"
-            } else {
-                "How to fix:"
-            };
+            let header = "How to fix:";
             let head = panel::Line::new().space(5).styled(header, panel::text_bold);
             panel::row(head);
             let repo = r.affected_repos.first().map(|s| s.as_str());
@@ -651,23 +659,10 @@ pub fn render_checks_panel(
             render_fix_block(&fix_text, text_width.saturating_sub(2), hyperlinks);
         }
 
-        if is_finding && r.org_default_issue {
-            panel::blank();
-            let note = if r.org_only_issue {
-                "Every existing repository has this enabled, but no security configuration is set as the default for newly created repositories — new repositories will be created without it"
-            } else {
-                "Org-wide default also flagged — fixing the default configuration's policy propagates to new repositories"
-            };
-            for line in panel::wrap(note, text_width) {
-                let l = panel::Line::new().space(5).styled(&line, panel::accent);
-                panel::row(l);
-            }
-        }
-
         if is_finding && r.check.ruleset_based {
             panel::blank();
             let note = "Strict enforcement can create friction — for example, a solo maintainer can be blocked from merging their own changes. If that's your situation, configure this ruleset's Bypass list to choose which roles, teams, GitHub Apps, or users may bypass it, rather than weakening the rule for everyone.";
-            for line in panel::wrap(note, text_width) {
+            for line in panel::wrap(note, text_width.saturating_sub(2)) {
                 let l = panel::Line::new().space(5).styled(&line, panel::warning);
                 panel::row(l);
             }
@@ -693,7 +688,14 @@ pub fn render_checks_panel(
         if is_finding && !r.affected_repos.is_empty() {
             panel::blank();
             let total = r.affected_repos.len();
-            let lbl = format!("Affected repositories ({total})");
+            let distinct_repos = {
+                let mut seen = std::collections::HashSet::new();
+                r.affected_repos
+                    .iter()
+                    .filter(|n| seen.insert(n.as_str()))
+                    .count()
+            };
+            let lbl = format!("Affected repositories ({distinct_repos})");
             let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
             panel::row(l);
 
@@ -817,12 +819,20 @@ enum Atom<'a> {
     Plain(&'a str),
     Url(&'a str),
     Underline(&'a str),
+    ParaBreak,
 }
 
 fn parse_fix_atoms(s: &str) -> Vec<Atom<'_>> {
     let mut atoms = Vec::new();
     let mut rest = s;
     loop {
+        if let Some(after) = strip_paragraph_break(rest) {
+            if !atoms.is_empty() {
+                atoms.push(Atom::ParaBreak);
+            }
+            rest = after;
+            continue;
+        }
         rest = rest.trim_start();
         if rest.is_empty() {
             break;
@@ -861,10 +871,20 @@ fn parse_fix_atoms(s: &str) -> Vec<Atom<'_>> {
     atoms
 }
 
-fn atom_visible<'a>(a: &'a Atom<'a>) -> &'a str {
+fn atom_visible(a: &Atom<'_>) -> String {
     match a {
-        Atom::Plain(s) | Atom::Url(s) | Atom::Underline(s) => s,
+        Atom::Plain(s) | Atom::Url(s) => (*s).to_string(),
+        Atom::Underline(s) => format!("*{s}*"),
+        Atom::ParaBreak => String::new(),
     }
+}
+
+fn strip_paragraph_break(s: &str) -> Option<&str> {
+    let trimmed = s.trim_start_matches([' ', '\t']);
+    let after = trimmed.strip_prefix('\n')?;
+    let after = after.trim_start_matches([' ', '\t']);
+    let after = after.strip_prefix('\n')?;
+    Some(after)
 }
 
 fn render_atom(a: &Atom<'_>, hyperlinks: bool) -> String {
@@ -878,7 +898,8 @@ fn render_atom(a: &Atom<'_>, hyperlinks: bool) -> String {
                 styled
             }
         }
-        Atom::Underline(s) => panel::info_underline(s),
+        Atom::Underline(s) => panel::info(&format!("*{s}*")),
+        Atom::ParaBreak => String::new(),
     }
 }
 
@@ -933,6 +954,24 @@ fn split_fences(text: &str) -> Vec<FixSegment<'_>> {
 }
 
 fn render_fix_prose(text: &str, width: usize, hyperlinks: bool) {
+    let paragraphs: Vec<&str> = text
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    for (i, para) in paragraphs.iter().enumerate() {
+        if i > 0 {
+            panel::blank();
+        }
+        if para.contains(" > ") {
+            render_fix_steps(para, width, hyperlinks);
+        } else {
+            render_wrapped_atoms(para, width, hyperlinks, 7);
+        }
+    }
+}
+
+fn render_wrapped_atoms(text: &str, width: usize, hyperlinks: bool, indent: usize) {
     let atoms = parse_fix_atoms(text);
     let mut line_atoms: Vec<&Atom<'_>> = Vec::new();
     let mut line_w = 0usize;
@@ -941,20 +980,28 @@ fn render_fix_prose(text: &str, width: usize, hyperlinks: bool) {
         if line_atoms.is_empty() {
             return;
         }
-        let mut line = panel::Line::new().space(7);
+        let mut line = panel::Line::new().space(indent);
         for (i, a) in line_atoms.iter().enumerate() {
             if i > 0 {
                 line = line.space(1);
             }
-            line = line.raw(atom_visible(a), &render_atom(a, hyperlinks));
+            line = line.raw(&atom_visible(a), &render_atom(a, hyperlinks));
         }
         panel::row(line);
     };
 
+    let avail = width.saturating_sub(indent.saturating_sub(5));
     for a in &atoms {
+        if matches!(a, Atom::ParaBreak) {
+            flush(&line_atoms);
+            line_atoms.clear();
+            line_w = 0;
+            panel::blank();
+            continue;
+        }
         let w = atom_visible(a).chars().count();
         let sep = if line_atoms.is_empty() { 0 } else { 1 };
-        if line_w + sep + w > width && !line_atoms.is_empty() {
+        if line_w + sep + w > avail && !line_atoms.is_empty() {
             flush(&line_atoms);
             line_atoms.clear();
             line_atoms.push(a);
@@ -965,4 +1012,107 @@ fn render_fix_prose(text: &str, width: usize, hyperlinks: bool) {
         }
     }
     flush(&line_atoms);
+}
+
+fn render_fix_steps(text: &str, width: usize, hyperlinks: bool) {
+    let raw_chunks: Vec<&str> = text
+        .split(" > ")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    // Merge chunks that look like section labels (no arrow, not a URL) into the
+    // next chunk so each step is a self-contained action.
+    let mut steps: Vec<String> = Vec::new();
+    let mut pending: Option<String> = None;
+    for chunk in &raw_chunks {
+        let is_action = chunk_is_action(chunk);
+        if is_action {
+            let merged = match pending.take() {
+                Some(label) => format!("{label} › {chunk}"),
+                None => (*chunk).to_string(),
+            };
+            steps.push(merged);
+        } else {
+            pending = Some(match pending.take() {
+                Some(prev) => format!("{prev} › {chunk}"),
+                None => (*chunk).to_string(),
+            });
+        }
+    }
+    if let Some(tail) = pending {
+        steps.push(tail);
+    }
+
+    let total = steps.len();
+    let num_width = total.to_string().len();
+    for (idx, step) in steps.iter().enumerate() {
+        let n = idx + 1;
+        let prefix = format!("{n:>num_width$}. ");
+        let body = step.replace(" -> ", " › ");
+        let body = if idx == 0 && (body.starts_with("http://") || body.starts_with("https://")) {
+            format!("Open: {body}")
+        } else {
+            body
+        };
+        render_step_line(&prefix, &body, width, hyperlinks);
+    }
+}
+
+fn chunk_is_action(chunk: &str) -> bool {
+    chunk.contains("->")
+        || chunk.contains('→')
+        || chunk.starts_with("http://")
+        || chunk.starts_with("https://")
+        || chunk.starts_with('(')
+}
+
+fn render_step_line(prefix: &str, text: &str, width: usize, hyperlinks: bool) {
+    let atoms = parse_fix_atoms(text);
+    let prefix_w = prefix.chars().count();
+    let indent = 5usize;
+    let avail = width.saturating_sub(prefix_w);
+    let blank: String = " ".repeat(prefix_w);
+
+    let mut line_atoms: Vec<&Atom<'_>> = Vec::new();
+    let mut line_w = 0usize;
+    let mut first_line = true;
+
+    let flush = |atoms: &[&Atom<'_>], first: &mut bool| {
+        if atoms.is_empty() {
+            return;
+        }
+        let pfx = if *first { prefix } else { blank.as_str() };
+        let pfx_render = panel::muted(pfx);
+        let mut line = panel::Line::new().space(indent).raw(pfx, &pfx_render);
+        for (i, a) in atoms.iter().enumerate() {
+            if i > 0 {
+                line = line.space(1);
+            }
+            line = line.raw(&atom_visible(a), &render_atom(a, hyperlinks));
+        }
+        panel::row(line);
+        *first = false;
+    };
+
+    for a in &atoms {
+        if matches!(a, Atom::ParaBreak) {
+            flush(&line_atoms, &mut first_line);
+            line_atoms.clear();
+            line_w = 0;
+            continue;
+        }
+        let w = atom_visible(a).chars().count();
+        let sep = if line_atoms.is_empty() { 0 } else { 1 };
+        if line_w + sep + w > avail && !line_atoms.is_empty() {
+            flush(&line_atoms, &mut first_line);
+            line_atoms.clear();
+            line_atoms.push(a);
+            line_w = w;
+        } else {
+            line_atoms.push(a);
+            line_w += sep + w;
+        }
+    }
+    flush(&line_atoms, &mut first_line);
 }

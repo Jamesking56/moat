@@ -4,6 +4,7 @@ pub struct CheckOutcome {
     pub status: Status,
     pub summary: String,
     pub items: Vec<String>,
+    pub failing_branches: Vec<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -20,6 +21,7 @@ impl CheckOutcome {
             status: Status::Pass,
             summary: summary.into(),
             items: Vec::new(),
+            failing_branches: Vec::new(),
         }
     }
     pub fn fail(summary: impl Into<String>) -> Self {
@@ -27,6 +29,7 @@ impl CheckOutcome {
             status: Status::Fail,
             summary: summary.into(),
             items: Vec::new(),
+            failing_branches: Vec::new(),
         }
     }
     pub fn warn(summary: impl Into<String>) -> Self {
@@ -34,6 +37,7 @@ impl CheckOutcome {
             status: Status::Warn,
             summary: summary.into(),
             items: Vec::new(),
+            failing_branches: Vec::new(),
         }
     }
     pub fn skipped(summary: impl Into<String>) -> Self {
@@ -41,10 +45,15 @@ impl CheckOutcome {
             status: Status::Skipped,
             summary: summary.into(),
             items: Vec::new(),
+            failing_branches: Vec::new(),
         }
     }
     pub fn with_items(mut self, items: Vec<String>) -> Self {
         self.items = items;
+        self
+    }
+    pub fn with_failing_branches(mut self, branches: Vec<String>) -> Self {
+        self.failing_branches = branches;
         self
     }
 

@@ -2,7 +2,7 @@ use crate::checks::common::{self, CollaboratorEntry};
 use crate::config::{Config, InvalidConfigError};
 use crate::support::github::{Fetch, Fetch403, GitHubClient};
 use crate::support::outcome::CheckOutcome;
-use crate::support::workflows::{self, WorkflowsState};
+use crate::support::workflows::{self, BranchedWorkflows};
 use anyhow::Result;
 use futures::future::try_join_all;
 use serde::Deserialize;
@@ -45,7 +45,7 @@ pub struct RepoContext {
     pub dependabot_alerts: FeatureState,
     pub dependabot_security_updates: FeatureState,
     pub private_vulnerability_reporting: FeatureState,
-    pub workflows: WorkflowsState,
+    pub workflows: BranchedWorkflows,
     pub security_md: FilePresence,
     pub dependabot_config: DependabotConfigState,
     pub webhooks: WebhooksState,
@@ -276,7 +276,7 @@ impl RepoContext {
                 dependabot_alerts: FeatureState::Unknown,
                 dependabot_security_updates: FeatureState::Unknown,
                 private_vulnerability_reporting: FeatureState::Unknown,
-                workflows: WorkflowsState::Loaded(Vec::new()),
+                workflows: BranchedWorkflows::empty(),
                 security_md: FilePresence::Unknown,
                 dependabot_config: DependabotConfigState::Unknown,
                 webhooks: WebhooksState::NoPermission,
@@ -289,18 +289,9 @@ impl RepoContext {
             });
         }
 
-        // Phase 1: config + branch listing in parallel (branch protections need both).
-        let (config, branch_entries) = tokio::try_join!(
-            traced(&repo.name, "config", fetch_config(client, org, &repo.name)),
-            traced(
-                &repo.name,
-                "branch listing",
-                fetch_branch_entries(client, org, &repo.name),
-            ),
-        )?;
+        let config = traced(&repo.name, "config", fetch_config(client, org, &repo.name)).await?;
 
-        let mut release_branch_names =
-            compute_release_branches(&repo.default_branch, &config, branch_entries);
+        let mut release_branch_names = compute_release_branches(&repo.default_branch, &config);
         release_branch_names.sort();
 
         let webhooks_path = format!("/repos/{org}/{}/hooks", repo.name);
@@ -350,7 +341,12 @@ impl RepoContext {
             traced(
                 &repo.name,
                 "workflows",
-                workflows::fetch_workflows(client, org, &repo.name),
+                workflows::fetch_workflows_for_branches(
+                    client,
+                    org,
+                    &repo.name,
+                    &release_branch_names,
+                ),
             ),
             traced(
                 &repo.name,
@@ -649,32 +645,7 @@ async fn fetch_branch_rules(
     Ok(flags)
 }
 
-#[derive(Deserialize)]
-struct BranchEntry {
-    name: String,
-}
-
-async fn fetch_branch_entries(
-    client: &impl GitHubClient,
-    org: &str,
-    repo: &str,
-) -> Result<Vec<BranchEntry>> {
-    Ok(
-        match client
-            .get_paginated::<BranchEntry>(&format!("/repos/{org}/{repo}/branches"))
-            .await?
-        {
-            Fetch::Ok(list) => list,
-            Fetch::Forbidden | Fetch::NotFound => Vec::new(),
-        },
-    )
-}
-
-fn compute_release_branches(
-    default_branch: &Option<String>,
-    config: &Config,
-    entries: Vec<BranchEntry>,
-) -> Vec<String> {
+fn compute_release_branches(default_branch: &Option<String>, config: &Config) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
@@ -687,12 +658,6 @@ fn compute_release_branches(
     for b in config.release_branches() {
         if seen.insert(b.clone()) {
             out.push(b.clone());
-        }
-    }
-
-    for entry in entries {
-        if is_release_pattern(&entry.name) && seen.insert(entry.name.clone()) {
-            out.push(entry.name);
         }
     }
 
@@ -798,19 +763,6 @@ async fn fetch_private_vulnerability_reporting(
             Fetch::Forbidden => FeatureState::Unknown,
         },
     )
-}
-
-fn is_release_pattern(name: &str) -> bool {
-    let mut chars = name.chars();
-    let mut had_digit = false;
-    loop {
-        match chars.next() {
-            Some(c) if c.is_ascii_digit() => had_digit = true,
-            Some('.') if had_digit => break,
-            _ => return false,
-        }
-    }
-    matches!(chars.next(), Some('x') | Some('X')) && chars.next().is_none()
 }
 
 async fn fetch_config(client: &impl GitHubClient, org: &str, repo: &str) -> Result<Config> {
