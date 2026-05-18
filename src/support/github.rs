@@ -58,12 +58,7 @@ pub trait GitHubClient {
     async fn get_json_plan_aware<T: DeserializeOwned>(&self, path: &str) -> Result<Fetch403<T>>;
     async fn get_raw(&self, path: &str) -> Result<Fetch<String>>;
     async fn get_presence(&self, path: &str) -> Result<Fetch<()>>;
-    async fn get_presence_plan_aware(&self, path: &str) -> Result<Fetch403<()>>;
     async fn get_paginated<T: DeserializeOwned>(&self, path: &str) -> Result<Fetch<Vec<T>>>;
-    async fn get_paginated_plan_aware<T: DeserializeOwned>(
-        &self,
-        path: &str,
-    ) -> Result<Fetch403<Vec<T>>>;
 }
 
 pub type Client = HttpGitHubClient;
@@ -188,27 +183,6 @@ impl HttpGitHubClient {
         }
     }
 
-    pub async fn get_presence_plan_aware(&self, path: &str) -> Result<Fetch403<()>> {
-        let url = self.url(path);
-        let resp = self.http.get(&url).send().await?;
-        match resp.status() {
-            StatusCode::OK | StatusCode::NO_CONTENT => Ok(Fetch403::Ok(())),
-            StatusCode::NOT_FOUND => Ok(Fetch403::NotFound),
-            StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => {
-                let body = resp.text().await.unwrap_or_default();
-                if body.contains("Upgrade to GitHub") {
-                    Ok(Fetch403::PlanGated)
-                } else {
-                    Ok(Fetch403::Forbidden)
-                }
-            }
-            s => {
-                let body = resp.text().await.unwrap_or_default();
-                Err(anyhow!("GET {url} -> {s}: {body}"))
-            }
-        }
-    }
-
     pub async fn get_paginated<T: DeserializeOwned>(&self, path: &str) -> Result<Fetch<Vec<T>>> {
         let mut out = Vec::new();
         let sep = if path.contains('?') { '&' } else { '?' };
@@ -239,44 +213,6 @@ impl HttpGitHubClient {
 
         Ok(Fetch::Ok(out))
     }
-
-    pub async fn get_paginated_plan_aware<T: DeserializeOwned>(
-        &self,
-        path: &str,
-    ) -> Result<Fetch403<Vec<T>>> {
-        let mut out = Vec::new();
-        let sep = if path.contains('?') { '&' } else { '?' };
-        let mut next = Some(format!("{}{sep}per_page=100", self.url(path)));
-        let mut first = true;
-
-        while let Some(url) = next {
-            let resp = self.http.get(&url).send().await?;
-            let status = resp.status();
-            if !status.is_success() {
-                if first {
-                    match status {
-                        StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => {
-                            let body = resp.text().await.unwrap_or_default();
-                            if body.contains("Upgrade to GitHub") {
-                                return Ok(Fetch403::PlanGated);
-                            }
-                            return Ok(Fetch403::Forbidden);
-                        }
-                        StatusCode::NOT_FOUND => return Ok(Fetch403::NotFound),
-                        _ => {}
-                    }
-                }
-                let body = resp.text().await.unwrap_or_default();
-                return Err(anyhow!("GET {url} -> {status}: {body}"));
-            }
-            next = next_link(resp.headers());
-            let page: Vec<T> = resp.json().await?;
-            out.extend(page);
-            first = false;
-        }
-
-        Ok(Fetch403::Ok(out))
-    }
 }
 
 impl GitHubClient for HttpGitHubClient {
@@ -292,17 +228,8 @@ impl GitHubClient for HttpGitHubClient {
     async fn get_presence(&self, path: &str) -> Result<Fetch<()>> {
         HttpGitHubClient::get_presence(self, path).await
     }
-    async fn get_presence_plan_aware(&self, path: &str) -> Result<Fetch403<()>> {
-        HttpGitHubClient::get_presence_plan_aware(self, path).await
-    }
     async fn get_paginated<T: DeserializeOwned>(&self, path: &str) -> Result<Fetch<Vec<T>>> {
         HttpGitHubClient::get_paginated(self, path).await
-    }
-    async fn get_paginated_plan_aware<T: DeserializeOwned>(
-        &self,
-        path: &str,
-    ) -> Result<Fetch403<Vec<T>>> {
-        HttpGitHubClient::get_paginated_plan_aware(self, path).await
     }
 }
 
@@ -458,17 +385,6 @@ impl GitHubClient for FakeGitHubClient {
         })
     }
 
-    async fn get_presence_plan_aware(&self, path: &str) -> Result<Fetch403<()>> {
-        Ok(match self.lookup(path) {
-            Some(FakeResponse::Json(_))
-            | Some(FakeResponse::Raw(_))
-            | Some(FakeResponse::Empty) => Fetch403::Ok(()),
-            Some(FakeResponse::PlanGated) => Fetch403::PlanGated,
-            Some(FakeResponse::Forbidden) => Fetch403::Forbidden,
-            Some(FakeResponse::NotFound) | None => Fetch403::NotFound,
-        })
-    }
-
     async fn get_paginated<T: DeserializeOwned>(&self, path: &str) -> Result<Fetch<Vec<T>>> {
         if let Some(resp) = self.lookup(path) {
             match resp {
@@ -485,27 +401,5 @@ impl GitHubClient for FakeGitHubClient {
             out.push(serde_json::from_value(v)?);
         }
         Ok(Fetch::Ok(out))
-    }
-
-    async fn get_paginated_plan_aware<T: DeserializeOwned>(
-        &self,
-        path: &str,
-    ) -> Result<Fetch403<Vec<T>>> {
-        if let Some(resp) = self.lookup(path) {
-            match resp {
-                FakeResponse::PlanGated => return Ok(Fetch403::PlanGated),
-                FakeResponse::Forbidden => return Ok(Fetch403::Forbidden),
-                FakeResponse::NotFound => return Ok(Fetch403::NotFound),
-                _ => {}
-            }
-        }
-        let Some(items) = self.lookup_paginated(path) else {
-            return Ok(Fetch403::NotFound);
-        };
-        let mut out = Vec::with_capacity(items.len());
-        for v in items {
-            out.push(serde_json::from_value(v)?);
-        }
-        Ok(Fetch403::Ok(out))
     }
 }

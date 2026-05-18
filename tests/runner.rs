@@ -9,7 +9,7 @@ fn result_with(status: Status) -> CheckResult {
         check: &CHECKS[0],
         status,
         summary: String::new(),
-        description: None,
+        state_note: None,
         affected_repos: Vec::new(),
         affected_repo_branches: Vec::new(),
         affected_repo_release_branches: Vec::new(),
@@ -72,33 +72,11 @@ fn stub_org(org: &str) -> FakeGitHubClient {
     FakeGitHubClient::new()
         .with_json(
             format!("/orgs/{org}"),
-            json!({
-                "two_factor_requirement_enabled": true,
-                "default_repository_permission": "read",
-                "plan": { "name": "team" }
-            }),
-        )
-        .with_json(
-            format!("/orgs/{org}/settings/immutable-releases"),
-            json!({ "enforced_repositories": "all" }),
-        )
-        .with_json(
-            format!("/orgs/{org}/actions/permissions/fork-pr-contributor-approval"),
-            json!({ "approval_policy": "all_external_contributors" }),
-        )
-        .with_json(
-            format!("/orgs/{org}/actions/permissions/workflow"),
-            json!({ "default_workflow_permissions": "read" }),
-        )
-        .with_json(
-            format!("/orgs/{org}/code-security/configurations/defaults"),
-            json!([]),
+            json!({ "two_factor_requirement_enabled": true }),
         )
         .with_paginated(format!("/orgs/{org}/members?filter=2fa_disabled"), vec![])
         .with_paginated(format!("/orgs/{org}/members?role=admin"), vec![])
         .with_paginated(format!("/orgs/{org}/outside_collaborators"), vec![])
-        .with_paginated(format!("/orgs/{org}/hooks"), vec![])
-        .with_paginated(format!("/orgs/{org}/rulesets"), vec![])
         .with_paginated(
             format!("/orgs/{org}/repos?type=all"),
             vec![json!({
@@ -124,31 +102,6 @@ fn stub_org(org: &str) -> FakeGitHubClient {
             json!({ "default_workflow_permissions": "read" }),
         )
         .with_status(format!("/repos/{org}/demo/vulnerability-alerts"), 204)
-        .with_json(
-            format!("/repos/{org}/demo/automated-security-fixes"),
-            json!({ "enabled": true, "paused": false }),
-        )
-        .with_json(
-            format!("/repos/{org}/demo/private-vulnerability-reporting"),
-            json!({ "enabled": true }),
-        )
-        .with_json(
-            format!("/repos/{org}/demo/immutable-releases"),
-            json!({ "enabled": true }),
-        )
-        .with_json(
-            format!("/repos/{org}/demo/actions/permissions/fork-pr-contributor-approval"),
-            json!({ "approval_policy": "all_external_contributors" }),
-        )
-        .with_json(
-            format!("/repos/{org}/demo/actions/permissions"),
-            json!({ "sha_pinning_required": true }),
-        )
-        .with_paginated(format!("/repos/{org}/demo/hooks"), vec![])
-        .with_paginated(
-            format!("/repos/{org}/demo/collaborators?affiliation=direct"),
-            vec![],
-        )
 }
 
 #[tokio::test]

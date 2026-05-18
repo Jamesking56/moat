@@ -1,14 +1,17 @@
 use crate::checks::StateCtx;
 use crate::checks::common::ruleset_state_phrase;
-use crate::checks::org_context::OrgContext;
+use crate::checks::org_context::{OrgContext, RulesetsState};
 use crate::checks::repo_context::{BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories release branches have linear history";
-pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (*Click* -> New ruleset -> New branch ruleset or *Edit* -> Existing one) > Enforcement status > *Select* -> Active > Target branches > *Add target* -> {branches} > Branch rules > *Check* -> Require linear history > *Click* -> Create/Save changes";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (__Click__ -> New ruleset -> New branch ruleset or __Edit__ -> Existing one) > Enforcement status > __Select__ -> Active > Target branches > __Add target__ -> {branches} > Branch rules > __Check__ -> Require linear history > __Click__ -> Create/Save changes";
 pub const WHY_ENABLE: &str = "Merge commits can hide unreviewed parents — a `git merge` of an unprotected side branch can introduce code that no reviewer ever saw, while still appearing as a normal merge in the PR.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
+    if ctx.rulesets.state == RulesetsState::NoPermission {
+        return CheckOutcome::skipped("?");
+    }
     if ctx.rulesets.required_linear_history {
         CheckOutcome::pass("Required by an org-level ruleset")
     } else {
@@ -26,8 +29,14 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     })
 }
 
-pub fn description(ctx: StateCtx<'_>) -> Option<String> {
-    let org_required = ctx.org.map(|o| o.rulesets.required_linear_history);
+pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
+    let org_required = ctx.org.and_then(|o| {
+        if o.rulesets.state == RulesetsState::NoPermission {
+            None
+        } else {
+            Some(o.rulesets.required_linear_history)
+        }
+    });
     ruleset_state_phrase(
         "linear history",
         ctx.repos,

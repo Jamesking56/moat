@@ -1,5 +1,5 @@
-use crate::checks::common::{self, CollaboratorEntry, WebhookInfo, permission_error};
-use crate::support::github::{Fetch, Fetch403, GitHubClient};
+use crate::checks::common::{self, CollaboratorEntry};
+use crate::support::github::{Fetch, GitHubClient};
 use crate::support::outcome::CheckOutcome;
 use anyhow::Result;
 use futures::future::try_join_all;
@@ -7,7 +7,7 @@ use futures::stream::{self, StreamExt};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-pub use crate::checks::common::{FeatureState, WorkflowTokenState};
+pub use crate::checks::common::{FeatureState, WebhooksState, WorkflowTokenState};
 
 const COLLABORATOR_CONCURRENCY: usize = 12;
 
@@ -24,14 +24,15 @@ pub enum OrgPlan {
     Team,
     Enterprise,
     Other,
+    Unknown,
 }
 
 pub struct OrgContext {
     pub plan: OrgPlan,
     pub two_factor_required: TwoFactorState,
-    pub members_without_2fa: Vec<String>,
-    pub outside_collaborators: Vec<String>,
-    pub admins: Vec<String>,
+    pub members_without_2fa: MemberList,
+    pub outside_collaborators: MemberList,
+    pub admins: MemberList,
     pub default_repository_permission: DefaultRepoPermissionState,
     pub release_immutability: ReleaseImmutabilityState,
     pub fork_pr_contributor_approval: ForkPrContributorApprovalState,
@@ -40,12 +41,13 @@ pub struct OrgContext {
     pub push_protection_default: FeatureDefaultState,
     pub dependabot_alerts_default: FeatureDefaultState,
     pub dependabot_security_updates_default: FeatureDefaultState,
-    pub webhooks: Vec<WebhookInfo>,
+    pub webhooks: WebhooksState,
     pub private_vulnerability_reporting: FeatureDefaultState,
     pub rulesets: OrgRulesets,
 }
 
 pub struct OrgRulesets {
+    pub state: RulesetsState,
     pub any_active: bool,
     pub required_signatures: bool,
     pub pull_request: bool,
@@ -58,9 +60,16 @@ pub struct OrgRulesets {
     pub has_bypass_actors: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RulesetsState {
+    Loaded,
+    NoPermission,
+}
+
 impl OrgRulesets {
-    pub fn empty() -> Self {
+    pub fn empty(state: RulesetsState) -> Self {
         Self {
+            state,
             any_active: false,
             required_signatures: false,
             pull_request: false,
@@ -80,16 +89,18 @@ pub enum FeatureDefaultState {
     Enabled,
     Disabled,
     NotSet,
+    Unknown,
 }
 
 impl FeatureDefaultState {
-    pub fn to_outcome(&self) -> CheckOutcome {
+    pub fn to_outcome(&self, unknown_label: &str) -> CheckOutcome {
         match self {
             Self::Enabled => CheckOutcome::pass("Enabled by default for new repositories"),
             Self::Disabled => CheckOutcome::fail("Disabled by default for new repositories"),
             Self::NotSet => {
                 CheckOutcome::warn("No default security configuration set for new repositories")
             }
+            Self::Unknown => CheckOutcome::skipped(unknown_label),
         }
     }
 }
@@ -100,13 +111,14 @@ pub enum ForkPrContributorApprovalState {
     FirstTimeContributors,
     FirstTimeContributorsNewToGithub,
     Other,
-    PlanGated,
+    Unknown,
 }
 
 #[derive(Clone, Copy)]
 pub enum TwoFactorState {
     Required,
     NotRequired,
+    Unknown,
 }
 
 #[derive(Clone, Copy)]
@@ -114,6 +126,12 @@ pub enum ReleaseImmutabilityState {
     All,
     Selected,
     None,
+    Unknown,
+}
+
+pub enum MemberList {
+    Ok(Vec<String>),
+    NoPermission,
 }
 
 pub enum DefaultRepoPermissionState {
@@ -122,6 +140,21 @@ pub enum DefaultRepoPermissionState {
     Write,
     Admin,
     Other(String),
+    Unknown,
+}
+
+impl MemberList {
+    pub fn outcome(
+        &self,
+        empty: CheckOutcome,
+        found: impl FnOnce(&[String]) -> CheckOutcome,
+    ) -> CheckOutcome {
+        match self {
+            MemberList::NoPermission => CheckOutcome::skipped("(requires org admin token)"),
+            MemberList::Ok(v) if v.is_empty() => empty,
+            MemberList::Ok(v) => found(v).with_items(v.clone()),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -216,19 +249,16 @@ impl OrgContext {
             ),
             traced(
                 "members without 2FA",
-                fetch_logins(client, &members_2fa_path, org, "members without 2FA"),
+                fetch_logins(client, &members_2fa_path),
             ),
             traced(
                 "outside collaborators",
                 fetch_outside_collaborators(client, org),
             ),
-            traced(
-                "organization admins",
-                fetch_logins(client, &admins_path, org, "organization admins"),
-            ),
+            traced("organization admins", fetch_logins(client, &admins_path)),
             traced(
                 "organization webhooks",
-                common::fetch_webhooks(client, &hooks_path, org, None),
+                common::fetch_webhooks(client, &hooks_path)
             ),
             traced("organization rulesets", fetch_org_rulesets(client, org)),
         )?;
@@ -238,7 +268,7 @@ impl OrgContext {
                 let tfa = match o.two_factor_requirement_enabled {
                     Some(true) => TwoFactorState::Required,
                     Some(false) => TwoFactorState::NotRequired,
-                    None => return Err(permission_error("organization 2FA policy", org, None)),
+                    None => TwoFactorState::Unknown,
                 };
                 let perm = match o.default_repository_permission.as_deref() {
                     Some("none") => DefaultRepoPermissionState::None,
@@ -246,13 +276,7 @@ impl OrgContext {
                     Some("write") => DefaultRepoPermissionState::Write,
                     Some("admin") => DefaultRepoPermissionState::Admin,
                     Some(other) => DefaultRepoPermissionState::Other(other.to_string()),
-                    None => {
-                        return Err(permission_error(
-                            "organization default repository permission",
-                            org,
-                            None,
-                        ));
-                    }
+                    None => DefaultRepoPermissionState::Unknown,
                 };
                 let plan = match o.plan.as_ref().and_then(|p| p.name.as_deref()) {
                     Some("free") => OrgPlan::Free,
@@ -261,13 +285,15 @@ impl OrgContext {
                         OrgPlan::Enterprise
                     }
                     Some(_) => OrgPlan::Other,
-                    None => return Err(permission_error("organization plan", org, None)),
+                    None => OrgPlan::Unknown,
                 };
                 (tfa, perm, plan)
             }
-            Fetch::NotFound | Fetch::Forbidden => {
-                return Err(permission_error("organization settings", org, None));
-            }
+            _ => (
+                TwoFactorState::Unknown,
+                DefaultRepoPermissionState::Unknown,
+                OrgPlan::Unknown,
+            ),
         };
 
         let release_immutability = match immut_resp {
@@ -275,11 +301,9 @@ impl OrgContext {
                 Some("all") => ReleaseImmutabilityState::All,
                 Some("selected") => ReleaseImmutabilityState::Selected,
                 Some("none") => ReleaseImmutabilityState::None,
-                _ => return Err(permission_error("release immutability policy", org, None)),
+                _ => ReleaseImmutabilityState::Unknown,
             },
-            Fetch::NotFound | Fetch::Forbidden => {
-                return Err(permission_error("release immutability policy", org, None));
-            }
+            _ => ReleaseImmutabilityState::Unknown,
         };
 
         let fork_pr_contributor_approval = match fork_pr_resp {
@@ -294,42 +318,18 @@ impl OrgContext {
                     ForkPrContributorApprovalState::FirstTimeContributorsNewToGithub
                 }
                 Some(_) => ForkPrContributorApprovalState::Other,
-                None => {
-                    return Err(permission_error(
-                        "fork PR contributor approval policy",
-                        org,
-                        None,
-                    ));
-                }
+                None => ForkPrContributorApprovalState::Unknown,
             },
-            Fetch::NotFound | Fetch::Forbidden => {
-                return Err(permission_error(
-                    "fork PR contributor approval policy",
-                    org,
-                    None,
-                ));
-            }
+            _ => ForkPrContributorApprovalState::Unknown,
         };
 
         let workflow_token = match wf_perms_resp {
             Fetch::Ok(w) => match w.default_workflow_permissions.as_deref() {
                 Some("read") => WorkflowTokenState::Read,
                 Some(_) => WorkflowTokenState::Write,
-                None => {
-                    return Err(permission_error(
-                        "default workflow token permissions",
-                        org,
-                        None,
-                    ));
-                }
+                None => WorkflowTokenState::Unavailable,
             },
-            Fetch::NotFound | Fetch::Forbidden => {
-                return Err(permission_error(
-                    "default workflow token permissions",
-                    org,
-                    None,
-                ));
-            }
+            _ => WorkflowTokenState::Unavailable,
         };
 
         let (
@@ -350,31 +350,11 @@ impl OrgContext {
                     .and_then(|d| d.configuration);
                 match chosen {
                     Some(c) => (
-                        feature_default(
-                            c.secret_scanning.as_deref(),
-                            org,
-                            "default secret scanning policy",
-                        )?,
-                        feature_default(
-                            c.secret_scanning_push_protection.as_deref(),
-                            org,
-                            "default secret push protection policy",
-                        )?,
-                        feature_default(
-                            c.dependabot_alerts.as_deref(),
-                            org,
-                            "default dependabot alerts policy",
-                        )?,
-                        feature_default(
-                            c.dependabot_security_updates.as_deref(),
-                            org,
-                            "default dependabot security updates policy",
-                        )?,
-                        feature_default(
-                            c.private_vulnerability_reporting.as_deref(),
-                            org,
-                            "default private vulnerability reporting policy",
-                        )?,
+                        feature_default(c.secret_scanning.as_deref()),
+                        feature_default(c.secret_scanning_push_protection.as_deref()),
+                        feature_default(c.dependabot_alerts.as_deref()),
+                        feature_default(c.dependabot_security_updates.as_deref()),
+                        feature_default(c.private_vulnerability_reporting.as_deref()),
                     ),
                     None => (
                         FeatureDefaultState::NotSet,
@@ -385,13 +365,13 @@ impl OrgContext {
                     ),
                 }
             }
-            Fetch::NotFound | Fetch::Forbidden => {
-                return Err(permission_error(
-                    "default code security configuration",
-                    org,
-                    None,
-                ));
-            }
+            _ => (
+                FeatureDefaultState::Unknown,
+                FeatureDefaultState::Unknown,
+                FeatureDefaultState::Unknown,
+                FeatureDefaultState::Unknown,
+                FeatureDefaultState::Unknown,
+            ),
         };
 
         Ok(Self {
@@ -515,15 +495,12 @@ fn targets_default_or_all_branches(conditions: Option<&RulesetConditions>) -> bo
 
 pub async fn fetch_org_rulesets(client: &impl GitHubClient, org: &str) -> Result<OrgRulesets> {
     let summaries: Vec<RulesetSummary> = match client
-        .get_paginated_plan_aware::<RulesetSummary>(&format!("/orgs/{org}/rulesets"))
+        .get_paginated::<RulesetSummary>(&format!("/orgs/{org}/rulesets"))
         .await?
     {
-        Fetch403::Ok(v) => v,
-        // GitHub returns 403 with "Upgrade to GitHub Team" on Free plans — that's a plan gate,
-        // not a permission issue, so degrade gracefully. A real Forbidden still bails.
-        Fetch403::PlanGated => return Ok(OrgRulesets::empty()),
-        Fetch403::Forbidden => return Err(permission_error("organization rulesets", org, None)),
-        Fetch403::NotFound => return Ok(OrgRulesets::empty()),
+        Fetch::Ok(v) => v,
+        Fetch::Forbidden => return Ok(OrgRulesets::empty(RulesetsState::NoPermission)),
+        Fetch::NotFound => return Ok(OrgRulesets::empty(RulesetsState::Loaded)),
     };
 
     let active: Vec<u64> = summaries
@@ -533,7 +510,7 @@ pub async fn fetch_org_rulesets(client: &impl GitHubClient, org: &str) -> Result
         .collect();
 
     if active.is_empty() {
-        return Ok(OrgRulesets::empty());
+        return Ok(OrgRulesets::empty(RulesetsState::Loaded));
     }
 
     let details: Vec<RulesetDetail> = try_join_all(active.into_iter().map(|id| async move {
@@ -541,15 +518,16 @@ pub async fn fetch_org_rulesets(client: &impl GitHubClient, org: &str) -> Result
             .get_json::<RulesetDetail>(&format!("/orgs/{org}/rulesets/{id}"))
             .await?
         {
-            Fetch::Ok(d) => Ok::<_, anyhow::Error>(d),
-            Fetch::NotFound | Fetch::Forbidden => {
-                Err(permission_error(&format!("ruleset {id}"), org, None))
-            }
+            Fetch::Ok(d) => Ok::<_, anyhow::Error>(Some(d)),
+            Fetch::NotFound | Fetch::Forbidden => Ok(None),
         }
     }))
-    .await?;
+    .await?
+    .into_iter()
+    .flatten()
+    .collect();
 
-    let mut out = OrgRulesets::empty();
+    let mut out = OrgRulesets::empty(RulesetsState::Loaded);
     for detail in details {
         // Only branch rulesets contribute to branch-protection booleans.
         if detail.target.as_deref().unwrap_or("branch") != "branch" {
@@ -607,25 +585,20 @@ pub async fn fetch_org_rulesets(client: &impl GitHubClient, org: &str) -> Result
     Ok(out)
 }
 
-fn feature_default(value: Option<&str>, org: &str, resource: &str) -> Result<FeatureDefaultState> {
+fn feature_default(value: Option<&str>) -> FeatureDefaultState {
     match value {
-        Some("enabled") => Ok(FeatureDefaultState::Enabled),
-        Some("disabled") => Ok(FeatureDefaultState::Disabled),
-        Some("not_set") | None => Ok(FeatureDefaultState::NotSet),
-        Some(_) => Err(permission_error(resource, org, None)),
+        Some("enabled") => FeatureDefaultState::Enabled,
+        Some("disabled") => FeatureDefaultState::Disabled,
+        Some("not_set") | None => FeatureDefaultState::NotSet,
+        Some(_) => FeatureDefaultState::Unknown,
     }
 }
 
-async fn fetch_logins(
-    client: &impl GitHubClient,
-    path: &str,
-    org: &str,
-    resource: &str,
-) -> Result<Vec<String>> {
+async fn fetch_logins(client: &impl GitHubClient, path: &str) -> Result<MemberList> {
     match client.get_paginated::<User>(path).await? {
-        Fetch::Ok(users) => Ok(users.into_iter().map(|u| u.login).collect()),
-        Fetch::Forbidden => Err(permission_error(resource, org, None)),
-        Fetch::NotFound => Ok(Vec::new()),
+        Fetch::Ok(users) => Ok(MemberList::Ok(users.into_iter().map(|u| u.login).collect())),
+        Fetch::Forbidden => Ok(MemberList::NoPermission),
+        Fetch::NotFound => Ok(MemberList::Ok(Vec::new())),
     }
 }
 
@@ -640,28 +613,22 @@ struct RepoBrief {
     archived: bool,
 }
 
-async fn fetch_outside_collaborators(client: &impl GitHubClient, org: &str) -> Result<Vec<String>> {
+async fn fetch_outside_collaborators(client: &impl GitHubClient, org: &str) -> Result<MemberList> {
     let outside_path = format!("/orgs/{org}/outside_collaborators");
     let repos_path = format!("/orgs/{org}/repos?type=all");
     let (all, repos_resp) = tokio::try_join!(
-        fetch_logins(client, &outside_path, org, "outside collaborators"),
+        fetch_logins(client, &outside_path),
         client.get_paginated::<RepoBrief>(&repos_path),
     )?;
 
-    if all.is_empty() {
-        return Ok(all);
-    }
-    let logins = all;
+    let logins = match all {
+        MemberList::Ok(v) if !v.is_empty() => v,
+        other => return Ok(other),
+    };
 
     let repos: Vec<RepoBrief> = match repos_resp {
         Fetch::Ok(v) => v.into_iter().filter(|r| !r.fork && !r.archived).collect(),
-        Fetch::Forbidden | Fetch::NotFound => {
-            return Err(permission_error(
-                "repository list for outside collaborator scan",
-                org,
-                None,
-            ));
-        }
+        Fetch::Forbidden | Fetch::NotFound => return Ok(MemberList::Ok(logins)),
     };
 
     let pairs: Vec<(String, String)> = stream::iter(repos)
@@ -672,29 +639,18 @@ async fn fetch_outside_collaborators(client: &impl GitHubClient, org: &str) -> R
             );
             let collaborators = match client.get_paginated::<CollaboratorEntry>(&path).await {
                 Ok(Fetch::Ok(v)) => v,
-                Ok(Fetch::Forbidden) | Ok(Fetch::NotFound) => {
-                    return Err(permission_error(
-                        "outside collaborators",
-                        org,
-                        Some(&repo.name),
-                    ));
-                }
-                Err(e) => return Err(e),
+                _ => return Vec::new(),
             };
-            Ok(collaborators
+            collaborators
                 .into_iter()
                 .filter(|c| repo.private || c.permissions.is_more_than_read())
                 .map(|c| (c.login, repo.name.clone()))
-                .collect::<Vec<_>>())
+                .collect::<Vec<_>>()
         })
         .buffer_unordered(COLLABORATOR_CONCURRENCY)
-        .collect::<Vec<Result<Vec<(String, String)>>>>()
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .flatten()
-        .collect();
+        .flat_map(stream::iter)
+        .collect()
+        .await;
 
     let mut by_login: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (login, repo) in pairs {
@@ -705,12 +661,14 @@ async fn fetch_outside_collaborators(client: &impl GitHubClient, org: &str) -> R
         repos.dedup();
     }
 
-    Ok(logins
-        .into_iter()
-        .filter_map(|l| {
-            by_login
-                .get(&l)
-                .map(|repos| format!("{l} ({})", repos.join(", ")))
-        })
-        .collect())
+    Ok(MemberList::Ok(
+        logins
+            .into_iter()
+            .filter_map(|l| {
+                by_login
+                    .get(&l)
+                    .map(|repos| format!("{l} ({})", repos.join(", ")))
+            })
+            .collect(),
+    ))
 }

@@ -1,7 +1,8 @@
 use moat::checks::common::WebhookInfo;
 use moat::checks::org_context::{
-    DefaultRepoPermissionState, FeatureDefaultState, ForkPrContributorApprovalState, OrgContext,
-    OrgPlan, OrgRulesets, ReleaseImmutabilityState, TwoFactorState, WorkflowTokenState,
+    DefaultRepoPermissionState, FeatureDefaultState, ForkPrContributorApprovalState, MemberList,
+    OrgContext, OrgPlan, OrgRulesets, ReleaseImmutabilityState, RulesetsState, TwoFactorState,
+    WebhooksState, WorkflowTokenState,
 };
 use moat::checks::{
     organization_members_all_have_two_factor as members_without_2fa,
@@ -23,12 +24,12 @@ use serde_json::json;
 
 fn ctx(
     tfa: TwoFactorState,
-    without: Vec<String>,
-    outside: Vec<String>,
-    admins: Vec<String>,
+    without: MemberList,
+    outside: MemberList,
+    admins: MemberList,
 ) -> OrgContext {
     OrgContext {
-        plan: OrgPlan::Team,
+        plan: OrgPlan::Unknown,
         two_factor_required: tfa,
         members_without_2fa: without,
         outside_collaborators: outside,
@@ -41,15 +42,20 @@ fn ctx(
         push_protection_default: FeatureDefaultState::Enabled,
         dependabot_alerts_default: FeatureDefaultState::Enabled,
         dependabot_security_updates_default: FeatureDefaultState::Enabled,
-        webhooks: Vec::new(),
+        webhooks: WebhooksState::Ok(Vec::new()),
         private_vulnerability_reporting: FeatureDefaultState::Enabled,
-        rulesets: OrgRulesets::empty(),
+        rulesets: OrgRulesets::empty(RulesetsState::Loaded),
     }
 }
 
 #[test]
 fn two_factor_required_passes_when_required() {
-    let c = ctx(TwoFactorState::Required, vec![], vec![], vec![]);
+    let c = ctx(
+        TwoFactorState::Required,
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+    );
     let o = two_factor_required::org_check(&c);
     assert_eq!(o.status, Status::Pass);
     assert_eq!(o.summary, "Required for every member");
@@ -57,13 +63,34 @@ fn two_factor_required_passes_when_required() {
 
 #[test]
 fn two_factor_required_fails_when_not_required() {
-    let c = ctx(TwoFactorState::NotRequired, vec![], vec![], vec![]);
+    let c = ctx(
+        TwoFactorState::NotRequired,
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+    );
     assert_eq!(two_factor_required::org_check(&c).status, Status::Fail);
 }
 
 #[test]
+fn two_factor_required_skipped_when_unknown() {
+    let c = ctx(
+        TwoFactorState::Unknown,
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+    );
+    assert_eq!(two_factor_required::org_check(&c).status, Status::Skipped);
+}
+
+#[test]
 fn members_without_2fa_passes_when_empty() {
-    let c = ctx(TwoFactorState::Required, vec![], vec![], vec![]);
+    let c = ctx(
+        TwoFactorState::Required,
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+    );
     assert_eq!(members_without_2fa::org_check(&c).status, Status::Pass);
 }
 
@@ -71,9 +98,9 @@ fn members_without_2fa_passes_when_empty() {
 fn members_without_2fa_fails_with_items_when_present() {
     let c = ctx(
         TwoFactorState::Required,
-        vec!["alice".into(), "bob".into()],
-        vec![],
-        vec![],
+        MemberList::Ok(vec!["alice".into(), "bob".into()]),
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
     );
     let o = members_without_2fa::org_check(&c);
     assert_eq!(o.status, Status::Fail);
@@ -81,8 +108,24 @@ fn members_without_2fa_fails_with_items_when_present() {
     assert_eq!(o.items, vec!["alice", "bob"]);
 }
 
+#[test]
+fn members_without_2fa_skipped_when_no_permission() {
+    let c = ctx(
+        TwoFactorState::Required,
+        MemberList::NoPermission,
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+    );
+    assert_eq!(members_without_2fa::org_check(&c).status, Status::Skipped);
+}
+
 fn base_ctx() -> OrgContext {
-    ctx(TwoFactorState::Required, vec![], vec![], vec![])
+    ctx(
+        TwoFactorState::Required,
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+    )
 }
 
 #[test]
@@ -98,6 +141,11 @@ fn default_repo_permission_states() {
     assert_eq!(default_repo_permission::org_check(&c).status, Status::Fail);
     c.default_repository_permission = DefaultRepoPermissionState::Other("custom".into());
     assert_eq!(default_repo_permission::org_check(&c).status, Status::Warn);
+    c.default_repository_permission = DefaultRepoPermissionState::Unknown;
+    assert_eq!(
+        default_repo_permission::org_check(&c).status,
+        Status::Skipped
+    );
 }
 
 #[test]
@@ -109,6 +157,8 @@ fn releases_immutable_org_states() {
     assert_eq!(releases_immutable::org_check(&c).status, Status::Warn);
     c.release_immutability = ReleaseImmutabilityState::None;
     assert_eq!(releases_immutable::org_check(&c).status, Status::Fail);
+    c.release_immutability = ReleaseImmutabilityState::Unknown;
+    assert_eq!(releases_immutable::org_check(&c).status, Status::Skipped);
 }
 
 #[test]
@@ -118,8 +168,8 @@ fn fork_pr_approval_org_states() {
     assert_eq!(fork_pr_approval::org_check(&c).status, Status::Pass);
     c.fork_pr_contributor_approval = ForkPrContributorApprovalState::FirstTimeContributors;
     assert_eq!(fork_pr_approval::org_check(&c).status, Status::Fail);
-    c.fork_pr_contributor_approval = ForkPrContributorApprovalState::Other;
-    assert_eq!(fork_pr_approval::org_check(&c).status, Status::Fail);
+    c.fork_pr_contributor_approval = ForkPrContributorApprovalState::Unknown;
+    assert_eq!(fork_pr_approval::org_check(&c).status, Status::Skipped);
 }
 
 #[test]
@@ -131,19 +181,28 @@ fn pvr_org_states() {
     assert_eq!(pvr::org_check(&c).status, Status::Fail);
     c.private_vulnerability_reporting = FeatureDefaultState::NotSet;
     assert_eq!(pvr::org_check(&c).status, Status::Warn);
+    c.private_vulnerability_reporting = FeatureDefaultState::Unknown;
+    assert_eq!(pvr::org_check(&c).status, Status::Skipped);
 }
 
 #[test]
 fn webhooks_org_empty_passes() {
     let mut c = base_ctx();
-    c.webhooks = Vec::new();
+    c.webhooks = WebhooksState::Ok(Vec::new());
     assert_eq!(webhooks_secure::org_check(&c).status, Status::Pass);
+}
+
+#[test]
+fn webhooks_org_no_permission_skipped() {
+    let mut c = base_ctx();
+    c.webhooks = WebhooksState::NoPermission;
+    assert_eq!(webhooks_secure::org_check(&c).status, Status::Skipped);
 }
 
 #[test]
 fn webhooks_org_insecure_fails_with_findings() {
     let mut c = base_ctx();
-    c.webhooks = vec![
+    c.webhooks = WebhooksState::Ok(vec![
         WebhookInfo {
             url: "http://a/h".into(),
             has_secret: true,
@@ -152,13 +211,14 @@ fn webhooks_org_insecure_fails_with_findings() {
             url: "https://b/h".into(),
             has_secret: false,
         },
-    ];
+    ]);
     let o = webhooks_secure::org_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert_eq!(o.items.len(), 2);
 }
 
 fn rulesets(
+    state: RulesetsState,
     any_active: bool,
     required_linear_history: bool,
     non_fast_forward: bool,
@@ -166,6 +226,7 @@ fn rulesets(
     has_bypass_actors: bool,
 ) -> OrgRulesets {
     OrgRulesets {
+        state,
         any_active,
         required_signatures: false,
         pull_request: false,
@@ -180,9 +241,23 @@ fn rulesets(
 }
 
 #[test]
+fn admin_enforcement_org_no_permission_skipped() {
+    let mut c = base_ctx();
+    c.rulesets = rulesets(
+        RulesetsState::NoPermission,
+        false,
+        false,
+        false,
+        false,
+        false,
+    );
+    assert_eq!(admin_enforcement::org_check(&c).status, Status::Skipped);
+}
+
+#[test]
 fn admin_enforcement_org_no_rulesets_fails() {
     let mut c = base_ctx();
-    c.rulesets = rulesets(false, false, false, false, false);
+    c.rulesets = rulesets(RulesetsState::Loaded, false, false, false, false, false);
     let o = admin_enforcement::org_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(o.summary.to_ascii_lowercase().contains("no active"));
@@ -191,7 +266,7 @@ fn admin_enforcement_org_no_rulesets_fails() {
 #[test]
 fn admin_enforcement_org_bypass_actors_fails() {
     let mut c = base_ctx();
-    c.rulesets = rulesets(true, false, false, false, true);
+    c.rulesets = rulesets(RulesetsState::Loaded, true, false, false, false, true);
     let o = admin_enforcement::org_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(o.summary.to_ascii_lowercase().contains("bypass"));
@@ -200,35 +275,63 @@ fn admin_enforcement_org_bypass_actors_fails() {
 #[test]
 fn admin_enforcement_org_clean_passes() {
     let mut c = base_ctx();
-    c.rulesets = rulesets(true, false, false, false, false);
+    c.rulesets = rulesets(RulesetsState::Loaded, true, false, false, false, false);
     assert_eq!(admin_enforcement::org_check(&c).status, Status::Pass);
+}
+
+#[test]
+fn linear_history_org_no_permission_skipped() {
+    let mut c = base_ctx();
+    c.rulesets = rulesets(
+        RulesetsState::NoPermission,
+        false,
+        false,
+        false,
+        false,
+        false,
+    );
+    assert_eq!(linear_history::org_check(&c).status, Status::Skipped);
 }
 
 #[test]
 fn linear_history_org_required_passes() {
     let mut c = base_ctx();
-    c.rulesets = rulesets(true, true, false, false, false);
+    c.rulesets = rulesets(RulesetsState::Loaded, true, true, false, false, false);
     assert_eq!(linear_history::org_check(&c).status, Status::Pass);
 }
 
 #[test]
 fn linear_history_org_not_required_fails() {
     let mut c = base_ctx();
-    c.rulesets = rulesets(true, false, false, false, false);
+    c.rulesets = rulesets(RulesetsState::Loaded, true, false, false, false, false);
     assert_eq!(linear_history::org_check(&c).status, Status::Fail);
+}
+
+#[test]
+fn immutable_branch_org_no_permission_skipped() {
+    let mut c = base_ctx();
+    c.rulesets = rulesets(
+        RulesetsState::NoPermission,
+        false,
+        false,
+        false,
+        false,
+        false,
+    );
+    assert_eq!(immutable_branch::org_check(&c).status, Status::Skipped);
 }
 
 #[test]
 fn immutable_branch_org_both_blocked_passes() {
     let mut c = base_ctx();
-    c.rulesets = rulesets(true, false, true, true, false);
+    c.rulesets = rulesets(RulesetsState::Loaded, true, false, true, true, false);
     assert_eq!(immutable_branch::org_check(&c).status, Status::Pass);
 }
 
 #[test]
 fn immutable_branch_org_missing_one_fails() {
     let mut c = base_ctx();
-    c.rulesets = rulesets(true, false, true, false, false);
+    c.rulesets = rulesets(RulesetsState::Loaded, true, false, true, false, false);
     let o = immutable_branch::org_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -241,7 +344,7 @@ fn immutable_branch_org_missing_one_fails() {
 #[test]
 fn immutable_branch_org_missing_both_fails() {
     let mut c = base_ctx();
-    c.rulesets = rulesets(true, false, false, false, false);
+    c.rulesets = rulesets(RulesetsState::Loaded, true, false, false, false, false);
     let o = immutable_branch::org_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert_eq!(o.items.len(), 2);
@@ -252,19 +355,7 @@ async fn org_context_fetch_aggregates_all_endpoints() {
     let client = FakeGitHubClient::new()
         .with_json(
             "/orgs/acme",
-            json!({
-                "two_factor_requirement_enabled": true,
-                "default_repository_permission": "read",
-                "plan": { "name": "team" }
-            }),
-        )
-        .with_json(
-            "/orgs/acme/settings/immutable-releases",
-            json!({ "enforced_repositories": "all" }),
-        )
-        .with_json(
-            "/orgs/acme/actions/permissions/fork-pr-contributor-approval",
-            json!({ "approval_policy": "all_external_contributors" }),
+            json!({ "two_factor_requirement_enabled": true }),
         )
         .with_json(
             "/orgs/acme/actions/permissions/workflow",
@@ -279,8 +370,7 @@ async fn org_context_fetch_aggregates_all_endpoints() {
                         "secret_scanning": "enabled",
                         "secret_scanning_push_protection": "enabled",
                         "dependabot_alerts": "enabled",
-                        "dependabot_security_updates": "enabled",
-                        "private_vulnerability_reporting": "enabled"
+                        "dependabot_security_updates": "enabled"
                     }
                 }
             ]),
@@ -294,8 +384,6 @@ async fn org_context_fetch_aggregates_all_endpoints() {
             vec![json!({ "login": "owner" })],
         )
         .with_paginated("/orgs/acme/outside_collaborators", vec![])
-        .with_paginated("/orgs/acme/hooks", vec![])
-        .with_paginated("/orgs/acme/rulesets", vec![])
         .with_paginated("/orgs/acme/repos?type=all", vec![]);
 
     let ctx = OrgContext::fetch(&client, "acme").await.unwrap();
@@ -318,14 +406,28 @@ async fn org_context_fetch_aggregates_all_endpoints() {
         ctx.dependabot_security_updates_default,
         FeatureDefaultState::Enabled
     ));
-    assert_eq!(ctx.members_without_2fa, vec!["alice".to_string()]);
-    assert!(ctx.outside_collaborators.is_empty());
-    assert_eq!(ctx.admins, vec!["owner".to_string()]);
+    match ctx.members_without_2fa {
+        MemberList::Ok(v) => assert_eq!(v, vec!["alice".to_string()]),
+        _ => panic!(),
+    }
+    match ctx.outside_collaborators {
+        MemberList::Ok(v) => assert!(v.is_empty()),
+        _ => panic!(),
+    }
+    match ctx.admins {
+        MemberList::Ok(v) => assert_eq!(v, vec!["owner".to_string()]),
+        _ => panic!(),
+    }
 }
 
 #[test]
 fn dependabot_security_updates_org_check_maps_default_states() {
-    let mut c = ctx(TwoFactorState::Required, vec![], vec![], vec![]);
+    let mut c = ctx(
+        TwoFactorState::Required,
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+        MemberList::Ok(vec![]),
+    );
 
     c.dependabot_security_updates_default = FeatureDefaultState::Enabled;
     assert_eq!(
@@ -344,50 +446,30 @@ fn dependabot_security_updates_org_check_maps_default_states() {
         dependabot_security_updates::org_check(&c).status,
         Status::Warn
     );
+
+    c.dependabot_security_updates_default = FeatureDefaultState::Unknown;
+    assert_eq!(
+        dependabot_security_updates::org_check(&c).status,
+        Status::Skipped
+    );
 }
 
 #[tokio::test]
-async fn org_context_fetch_bails_on_forbidden_members_endpoint() {
+async fn org_context_fetch_marks_forbidden_endpoints_as_no_permission() {
     let client = FakeGitHubClient::new()
-        .with_json(
-            "/orgs/acme",
-            json!({
-                "two_factor_requirement_enabled": true,
-                "default_repository_permission": "read",
-                "plan": { "name": "team" }
-            }),
-        )
-        .with_json(
-            "/orgs/acme/settings/immutable-releases",
-            json!({ "enforced_repositories": "all" }),
-        )
-        .with_json(
-            "/orgs/acme/actions/permissions/fork-pr-contributor-approval",
-            json!({ "approval_policy": "all_external_contributors" }),
-        )
-        .with_json(
-            "/orgs/acme/actions/permissions/workflow",
-            json!({ "default_workflow_permissions": "read" }),
-        )
-        .with_json(
-            "/orgs/acme/code-security/configurations/defaults",
-            json!([]),
-        )
-        .with_forbidden("/orgs/acme/members?filter=2fa_disabled")
-        .with_paginated("/orgs/acme/members?role=admin", vec![])
-        .with_paginated("/orgs/acme/outside_collaborators", vec![])
-        .with_paginated("/orgs/acme/hooks", vec![])
-        .with_paginated("/orgs/acme/rulesets", vec![])
-        .with_paginated("/orgs/acme/repos?type=all", vec![]);
+        .with_json("/orgs/acme", json!({}))
+        .with_forbidden("/orgs/acme/members")
+        .with_forbidden("/orgs/acme/outside_collaborators");
 
-    let err = OrgContext::fetch(&client, "acme")
-        .await
-        .err()
-        .expect("expected bail on 403");
-    assert!(
-        err.to_string().contains("missing permission"),
-        "unexpected error: {err}"
-    );
+    let ctx = OrgContext::fetch(&client, "acme").await.unwrap();
+
+    assert!(matches!(ctx.two_factor_required, TwoFactorState::Unknown));
+    assert!(matches!(ctx.members_without_2fa, MemberList::NoPermission));
+    assert!(matches!(
+        ctx.outside_collaborators,
+        MemberList::NoPermission
+    ));
+    assert!(matches!(ctx.admins, MemberList::NoPermission));
 }
 
 fn rulesets_with_pr(
@@ -397,6 +479,7 @@ fn rulesets_with_pr(
     code_owner: bool,
 ) -> OrgRulesets {
     OrgRulesets {
+        state: RulesetsState::Loaded,
         any_active: true,
         required_signatures: false,
         pull_request,
@@ -408,6 +491,13 @@ fn rulesets_with_pr(
         deletion: false,
         has_bypass_actors: false,
     }
+}
+
+#[test]
+fn pr_reviews_org_check_no_permission_skipped() {
+    let mut c = base_ctx();
+    c.rulesets = OrgRulesets::empty(RulesetsState::NoPermission);
+    assert_eq!(pr_reviews_org::org_check(&c).status, Status::Skipped);
 }
 
 #[test]

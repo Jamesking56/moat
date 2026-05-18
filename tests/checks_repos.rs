@@ -1,10 +1,9 @@
-use moat::checks::StateCtx;
 use moat::checks::common::WebhookInfo;
 use moat::checks::org_context::ForkPrContributorApprovalState;
 use moat::checks::repo_context::{
-    BranchProtectionState, BranchProtections, DependabotConfigState, FeatureState, FeatureStatus,
-    FilePresence, ReleaseImmutabilityRepoState, RepoContext, RepoListing, SHAPinningState,
-    SecurityAndAnalysis, WorkflowTokenState,
+    BranchProtectionState, BranchProtections, DependabotConfigState, DirectCollaboratorsState,
+    FeatureState, FeatureStatus, FilePresence, ReleaseImmutabilityRepoState, RepoContext,
+    RepoListing, SHAPinningState, SecurityAndAnalysis, WebhooksState, WorkflowTokenState,
 };
 use moat::checks::{
     repositories_actions_workflow_token_is_read_only as workflow_token,
@@ -30,21 +29,12 @@ use moat::checks::{
 };
 use moat::support::github::FakeGitHubClient;
 use moat::support::outcome::Status;
-use moat::support::workflows::{BranchedWorkflows, Workflow};
+use moat::support::workflows::{BranchedWorkflows, Workflow, WorkflowsState};
 use serde_json::json;
 
-fn bw(workflows: Vec<Workflow>) -> BranchedWorkflows {
+fn bw(state: WorkflowsState) -> BranchedWorkflows {
     BranchedWorkflows {
-        per_branch: vec![("main".into(), workflows)],
-    }
-}
-
-fn workflows_by_branch(states: Vec<(&str, Vec<Workflow>)>) -> BranchedWorkflows {
-    BranchedWorkflows {
-        per_branch: states
-            .into_iter()
-            .map(|(branch, ws)| (branch.into(), ws))
-            .collect(),
+        per_branch: vec![("main".into(), state)],
     }
 }
 
@@ -75,11 +65,11 @@ fn ctx(branch: BranchProtectionState, token: WorkflowTokenState) -> RepoContext 
         dependabot_alerts: FeatureState::Enabled,
         dependabot_security_updates: FeatureState::Enabled,
         private_vulnerability_reporting: FeatureState::Enabled,
-        workflows: bw(Vec::new()),
+        workflows: bw(WorkflowsState::Loaded(Vec::new())),
         security_md: FilePresence::Absent,
         dependabot_config: DependabotConfigState::Missing,
-        webhooks: Vec::new(),
-        direct_collaborators: Vec::new(),
+        webhooks: WebhooksState::Ok(Vec::new()),
+        direct_collaborators: DirectCollaboratorsState::Ok(Vec::new()),
         release_immutability: ReleaseImmutabilityRepoState::Enabled,
         fork_pr_contributor_approval: ForkPrContributorApprovalState::AllExternalContributors,
         sha_pinning: SHAPinningState::Enforced,
@@ -195,40 +185,21 @@ fn workflow_token_states() {
         BranchProtectionState::Unprotected,
         WorkflowTokenState::Write,
     );
+    let n = ctx(
+        BranchProtectionState::Unprotected,
+        WorkflowTokenState::Unavailable,
+    );
     assert_eq!(workflow_token::repo_check(&r).status, Status::Pass);
     assert_eq!(workflow_token::repo_check(&w).status, Status::Fail);
+    assert_eq!(workflow_token::repo_check(&n).status, Status::Skipped);
 }
 
 #[test]
 fn dependabot_config_skipped_when_no_workflows() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(Vec::new());
+    c.workflows = bw(WorkflowsState::Loaded(Vec::new()));
     c.dependabot_config = DependabotConfigState::Missing;
     assert_eq!(dependabot_config::repo_check(&c).status, Status::Skipped);
-}
-
-#[test]
-fn dependabot_config_description_counts_only_repos_with_workflows() {
-    let mut readable = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    readable.name = "readable".into();
-    readable.workflows = bw(vec![wf(
-        ".github/workflows/ci.yml",
-        "on: push\njobs:\n  a:\n    steps:\n      - run: echo\n",
-    )]);
-    readable.dependabot_config = DependabotConfigState::Missing;
-
-    let mut no_workflows = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    no_workflows.name = "no_workflows".into();
-    no_workflows.workflows = bw(Vec::new());
-    no_workflows.dependabot_config = DependabotConfigState::Missing;
-
-    let repos = vec![&readable, &no_workflows];
-    let note = dependabot_config::description(StateCtx {
-        org: None,
-        repos: &repos,
-    });
-
-    assert_eq!(note, Some("1/1 repository lack a dependabot config".into()));
 }
 
 #[test]
@@ -237,7 +208,7 @@ fn feature_state_outcomes_cover_all_variants() {
 
     c.secret_scanning = FeatureState::Enabled;
     c.push_protection = FeatureState::Disabled;
-    c.dependabot_alerts = FeatureState::PlanGated;
+    c.dependabot_alerts = FeatureState::Unknown;
 
     assert_eq!(secret_scanning::repo_check(&c).status, Status::Pass);
     assert_eq!(push_protection::repo_check(&c).status, Status::Fail);
@@ -260,7 +231,7 @@ fn dependabot_security_updates_repo_check_maps_feature_states() {
         Status::Fail
     );
 
-    c.dependabot_security_updates = FeatureState::PlanGated;
+    c.dependabot_security_updates = FeatureState::Unknown;
     assert_eq!(
         dependabot_security_updates::repo_check(&c).status,
         Status::Skipped
@@ -279,8 +250,9 @@ fn listing(default_branch: Option<&str>, sa: Option<SecurityAndAnalysis>) -> Rep
     }
 }
 
-fn happy_path_client() -> FakeGitHubClient {
-    FakeGitHubClient::new()
+#[tokio::test]
+async fn repo_context_fetch_happy_path() {
+    let client = FakeGitHubClient::new()
         .with_json(
             "/repos/acme/demo/branches/main/protection",
             json!({
@@ -296,26 +268,8 @@ fn happy_path_client() -> FakeGitHubClient {
         .with_json(
             "/repos/acme/demo/automated-security-fixes",
             json!({ "enabled": true, "paused": false }),
-        )
-        .with_json(
-            "/repos/acme/demo/immutable-releases",
-            json!({ "enabled": true }),
-        )
-        .with_json(
-            "/repos/acme/demo/actions/permissions/fork-pr-contributor-approval",
-            json!({ "approval_policy": "all_external_contributors" }),
-        )
-        .with_json(
-            "/repos/acme/demo/actions/permissions",
-            json!({ "sha_pinning_required": true }),
-        )
-        .with_paginated("/repos/acme/demo/hooks", vec![])
-        .with_paginated("/repos/acme/demo/collaborators?affiliation=direct", vec![])
-}
+        );
 
-#[tokio::test]
-async fn repo_context_fetch_happy_path() {
-    let client = happy_path_client();
     let sa = SecurityAndAnalysis {
         secret_scanning: Some(FeatureStatus {
             status: "enabled".into(),
@@ -347,37 +301,15 @@ async fn repo_context_fetch_happy_path() {
 
 #[tokio::test]
 async fn repo_context_fetch_unprotected_when_protection_missing() {
-    let client = happy_path_client()
+    let client = FakeGitHubClient::new()
         .with_not_found("/repos/acme/demo/branches/main/protection")
         .with_json(
             "/repos/acme/demo/actions/permissions/workflow",
             json!({ "default_workflow_permissions": "write" }),
         )
-        .with_not_found("/repos/acme/demo/vulnerability-alerts")
-        .with_json(
-            "/repos/acme/demo/automated-security-fixes",
-            json!({ "enabled": false, "paused": false }),
-        )
-        .with_json(
-            "/repos/acme/demo/immutable-releases",
-            json!({ "enabled": false }),
-        )
-        .with_json(
-            "/repos/acme/demo/actions/permissions",
-            json!({ "sha_pinning_required": false }),
-        );
+        .with_not_found("/repos/acme/demo/vulnerability-alerts");
 
-    // Pass a plan_gated sa wrapper-less listing so missing s_a doesn't crash
-    // — instead we provide a stub.
-    let sa = SecurityAndAnalysis {
-        secret_scanning: Some(FeatureStatus {
-            status: "disabled".into(),
-        }),
-        secret_scanning_push_protection: Some(FeatureStatus {
-            status: "disabled".into(),
-        }),
-    };
-    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), Some(sa)))
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
         .await
         .unwrap();
     assert!(matches!(
@@ -385,12 +317,13 @@ async fn repo_context_fetch_unprotected_when_protection_missing() {
         [(_, BranchProtectionState::Unprotected)]
     ));
     assert!(matches!(r.workflow_token, WorkflowTokenState::Write));
+    assert!(matches!(r.secret_scanning, FeatureState::Unknown));
     assert!(matches!(r.dependabot_alerts, FeatureState::Disabled));
 }
 
 #[tokio::test]
 async fn repo_context_fetch_plan_gated_private_repo_marks_scan_and_push_plan_gated() {
-    let client = happy_path_client()
+    let client = FakeGitHubClient::new()
         .with_plan_gated("/repos/acme/demo/branches/main/protection")
         .with_json(
             "/repos/acme/demo/actions/permissions/workflow",
@@ -400,18 +333,6 @@ async fn repo_context_fetch_plan_gated_private_repo_marks_scan_and_push_plan_gat
         .with_json(
             "/repos/acme/demo/automated-security-fixes",
             json!({ "enabled": true, "paused": false }),
-        )
-        .with_json(
-            "/repos/acme/demo/immutable-releases",
-            json!({ "enabled": true }),
-        )
-        .with_json(
-            "/repos/acme/demo/actions/permissions/fork-pr-contributor-approval",
-            json!({ "approval_policy": "all_external_contributors" }),
-        )
-        .with_json(
-            "/repos/acme/demo/actions/permissions",
-            json!({ "sha_pinning_required": true }),
         );
 
     let sa = SecurityAndAnalysis {
@@ -436,95 +357,80 @@ async fn repo_context_fetch_plan_gated_private_repo_marks_scan_and_push_plan_gat
 }
 
 #[tokio::test]
-async fn repo_context_fetch_forks_are_rejected() {
+async fn repo_context_fetch_forks_short_circuit() {
     let client = FakeGitHubClient::new();
     let mut l = listing(Some("main"), None);
     l.fork = true;
-    let err = RepoContext::fetch(&client, "acme", l)
-        .await
-        .err()
-        .expect("expected fork to be rejected");
-    assert!(err.to_string().to_ascii_lowercase().contains("fork"));
+    let r = RepoContext::fetch(&client, "acme", l).await.unwrap();
+    assert!(r.branch_protections.is_empty());
+    assert!(matches!(r.workflow_token, WorkflowTokenState::Unavailable));
 }
 
 #[test]
 fn direct_collaborators_states() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
 
-    c.direct_collaborators = Vec::new();
+    c.direct_collaborators = DirectCollaboratorsState::Ok(Vec::new());
     assert_eq!(direct_collaborators::repo_check(&c).status, Status::Pass);
 
-    c.direct_collaborators = vec!["alice".into(), "bob".into()];
+    c.direct_collaborators = DirectCollaboratorsState::Ok(vec!["alice".into(), "bob".into()]);
     let outcome = direct_collaborators::repo_check(&c);
     assert_eq!(outcome.status, Status::Fail);
     assert_eq!(outcome.summary, "2");
+
+    c.direct_collaborators = DirectCollaboratorsState::NoPermission;
+    assert_eq!(direct_collaborators::repo_check(&c).status, Status::Skipped);
 }
 
 #[tokio::test]
 async fn repo_context_fetch_direct_collaborators_populated() {
-    let client = happy_path_client().with_paginated(
-        "/repos/acme/demo/collaborators?affiliation=direct",
+    let client = FakeGitHubClient::new().with_paginated(
+        "/repos/acme/demo/collaborators",
         vec![json!({ "login": "alice" })],
     );
 
-    let sa = SecurityAndAnalysis {
-        secret_scanning: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-        secret_scanning_push_protection: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-    };
-    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), Some(sa)))
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
         .await
         .unwrap();
 
-    assert_eq!(r.direct_collaborators, vec!["alice".to_string()]);
+    match r.direct_collaborators {
+        DirectCollaboratorsState::Ok(v) => assert_eq!(v, vec!["alice".to_string()]),
+        _ => panic!("expected Ok"),
+    }
 }
 
 #[tokio::test]
 async fn repo_context_fetch_direct_collaborators_public_repo_filters_read_only() {
-    let client = happy_path_client().with_paginated(
-        "/repos/acme/demo/collaborators?affiliation=direct",
+    let client = FakeGitHubClient::new().with_paginated(
+        "/repos/acme/demo/collaborators",
         vec![
             json!({ "login": "reader", "permissions": { "pull": true } }),
             json!({ "login": "writer", "permissions": { "push": true } }),
         ],
     );
 
-    let sa = SecurityAndAnalysis {
-        secret_scanning: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-        secret_scanning_push_protection: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-    };
-    let mut l = listing(Some("main"), Some(sa));
+    let mut l = listing(Some("main"), None);
     l.private = false;
     let r = RepoContext::fetch(&client, "acme", l).await.unwrap();
 
-    assert_eq!(r.direct_collaborators, vec!["writer".to_string()]);
+    match r.direct_collaborators {
+        DirectCollaboratorsState::Ok(v) => assert_eq!(v, vec!["writer".to_string()]),
+        _ => panic!("expected Ok"),
+    }
 }
 
 #[tokio::test]
-async fn repo_context_fetch_direct_collaborators_forbidden_bails() {
-    let client =
-        happy_path_client().with_forbidden("/repos/acme/demo/collaborators?affiliation=direct");
+async fn repo_context_fetch_direct_collaborators_forbidden() {
+    let client = FakeGitHubClient::new().with_forbidden("/repos/acme/demo/collaborators");
 
-    let sa = SecurityAndAnalysis {
-        secret_scanning: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-        secret_scanning_push_protection: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-    };
-    let err = RepoContext::fetch(&client, "acme", listing(Some("main"), Some(sa)))
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
         .await
-        .err()
-        .expect("expected bail");
-    assert!(err.to_string().contains("direct collaborators"));
+        .unwrap();
+
+    assert!(matches!(
+        r.direct_collaborators,
+        DirectCollaboratorsState::NoPermission
+    ));
 }
 
 fn wf(path: &str, yaml: &str) -> Workflow {
@@ -557,10 +463,10 @@ fn protected_full(
 fn pinned_actions_enforced_still_flags_unpinned_refs() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.sha_pinning = SHAPinningState::Enforced;
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n",
-    )]);
+    )]));
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(o.summary.to_ascii_lowercase().contains("unpinned"));
@@ -570,10 +476,10 @@ fn pinned_actions_enforced_still_flags_unpinned_refs() {
 fn pinned_actions_not_enforced_with_all_pinned_and_workflows_reports_enforcement_off() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.sha_pinning = SHAPinningState::NotEnforced;
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@1234567890123456789012345678901234567890\n",
-    )]);
+    )]));
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert_eq!(o.summary, "✗ all pinned, but enforcement off");
@@ -581,47 +487,89 @@ fn pinned_actions_not_enforced_with_all_pinned_and_workflows_reports_enforcement
 }
 
 #[test]
-fn pinned_actions_no_workflows_is_skipped_regardless_of_enforcement() {
+fn pinned_actions_not_enforced_with_no_workflows_reports_enforcement_off_only() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.sha_pinning = SHAPinningState::NotEnforced;
-    c.workflows = bw(Vec::new());
+    c.workflows = bw(WorkflowsState::Loaded(Vec::new()));
     let o = pinned_actions::repo_check(&c);
-    assert_eq!(o.status, Status::Skipped);
+    assert_eq!(o.status, Status::Fail);
+    assert_eq!(o.summary, "✗ enforcement off");
 }
 
 #[test]
 fn pinned_actions_not_enforced_with_unpinned_reports_combined_summary() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.sha_pinning = SHAPinningState::NotEnforced;
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n      - uses: foo/bar@main\n",
-    )]);
+    )]));
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert_eq!(o.summary, "✗ 2 unpinned + enforcement off");
 }
 
 #[test]
-fn pinned_actions_no_workflows_is_skipped_when_enforced() {
+fn pinned_actions_unknown_enforcement_with_unpinned_reports_count_only() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.sha_pinning = SHAPinningState::Enforced;
-    c.workflows = bw(Vec::new());
+    c.sha_pinning = SHAPinningState::Unknown;
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
+        "ci.yml",
+        "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n",
+    )]));
+    let o = pinned_actions::repo_check(&c);
+    assert_eq!(o.status, Status::Fail);
+    assert_eq!(o.summary, "✗ 1 unpinned");
+}
+
+#[test]
+fn pinned_actions_workflows_no_permission_is_skipped() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.sha_pinning = SHAPinningState::Unknown;
+    c.workflows = bw(WorkflowsState::NoPermission);
     assert_eq!(pinned_actions::repo_check(&c).status, Status::Skipped);
+}
+
+#[test]
+fn pinned_actions_no_workflows_unknown_enforcement_is_skipped() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.sha_pinning = SHAPinningState::Unknown;
+    c.workflows = bw(WorkflowsState::Loaded(Vec::new()));
+    let o = pinned_actions::repo_check(&c);
+    assert_eq!(o.status, Status::Skipped);
+    assert!(o.summary.to_ascii_lowercase().contains("no workflows"));
+}
+
+#[test]
+fn pinned_actions_all_pinned_unknown_enforcement_passes_with_caveat() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.sha_pinning = SHAPinningState::Unknown;
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
+        "ci.yml",
+        "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@1234567890123456789012345678901234567890\n",
+    )]));
+    let o = pinned_actions::repo_check(&c);
+    assert_eq!(o.status, Status::Pass);
+    assert!(
+        o.summary
+            .to_ascii_lowercase()
+            .contains("enforcement unknown")
+    );
 }
 
 #[tokio::test]
 async fn repo_context_fetch_sha_pinning_enforced() {
-    let client = happy_path_client();
-    let sa = SecurityAndAnalysis {
-        secret_scanning: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-        secret_scanning_push_protection: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-    };
-    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), Some(sa)))
+    let client = FakeGitHubClient::new()
+        .with_json(
+            "/repos/acme/demo/actions/permissions",
+            json!({ "sha_pinning_required": true }),
+        )
+        .with_json(
+            "/repos/acme/demo/actions/permissions/workflow",
+            json!({ "default_workflow_permissions": "read" }),
+        );
+
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
         .await
         .unwrap();
     assert!(matches!(r.sha_pinning, SHAPinningState::Enforced));
@@ -629,40 +577,23 @@ async fn repo_context_fetch_sha_pinning_enforced() {
 
 #[tokio::test]
 async fn repo_context_fetch_sha_pinning_not_enforced() {
-    let client = happy_path_client().with_json(
+    let client = FakeGitHubClient::new().with_json(
         "/repos/acme/demo/actions/permissions",
         json!({ "sha_pinning_required": false }),
     );
-    let sa = SecurityAndAnalysis {
-        secret_scanning: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-        secret_scanning_push_protection: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-    };
-    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), Some(sa)))
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
         .await
         .unwrap();
     assert!(matches!(r.sha_pinning, SHAPinningState::NotEnforced));
 }
 
 #[tokio::test]
-async fn repo_context_fetch_sha_pinning_bails_when_endpoint_missing() {
-    let client = happy_path_client().with_not_found("/repos/acme/demo/actions/permissions");
-    let sa = SecurityAndAnalysis {
-        secret_scanning: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-        secret_scanning_push_protection: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-    };
-    let err = RepoContext::fetch(&client, "acme", listing(Some("main"), Some(sa)))
+async fn repo_context_fetch_sha_pinning_unknown_when_endpoint_missing() {
+    let client = FakeGitHubClient::new().with_not_found("/repos/acme/demo/actions/permissions");
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
         .await
-        .err()
-        .expect("expected bail");
-    assert!(err.to_string().to_ascii_lowercase().contains("sha pinning"));
+        .unwrap();
+    assert!(matches!(r.sha_pinning, SHAPinningState::Unknown));
 }
 
 #[test]
@@ -730,17 +661,24 @@ fn immutable_branch_plan_gated_skipped() {
 #[test]
 fn webhooks_empty_passes() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.webhooks = Vec::new();
+    c.webhooks = WebhooksState::Ok(Vec::new());
     assert_eq!(webhooks_secure::repo_check(&c).status, Status::Pass);
+}
+
+#[test]
+fn webhooks_no_permission_skipped() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.webhooks = WebhooksState::NoPermission;
+    assert_eq!(webhooks_secure::repo_check(&c).status, Status::Skipped);
 }
 
 #[test]
 fn webhooks_http_url_fails_with_not_https() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.webhooks = vec![WebhookInfo {
+    c.webhooks = WebhooksState::Ok(vec![WebhookInfo {
         url: "http://example.com/hook".into(),
         has_secret: true,
-    }];
+    }]);
     let o = webhooks_secure::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -753,10 +691,10 @@ fn webhooks_http_url_fails_with_not_https() {
 #[test]
 fn webhooks_no_secret_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.webhooks = vec![WebhookInfo {
+    c.webhooks = WebhooksState::Ok(vec![WebhookInfo {
         url: "https://example.com/hook".into(),
         has_secret: false,
-    }];
+    }]);
     let o = webhooks_secure::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -769,10 +707,10 @@ fn webhooks_no_secret_fails() {
 #[test]
 fn webhooks_empty_url_renders_as_unknown() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.webhooks = vec![WebhookInfo {
+    c.webhooks = WebhooksState::Ok(vec![WebhookInfo {
         url: String::new(),
         has_secret: false,
-    }];
+    }]);
     let o = webhooks_secure::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -785,10 +723,10 @@ fn webhooks_empty_url_renders_as_unknown() {
 #[test]
 fn webhooks_both_failures_reported() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.webhooks = vec![WebhookInfo {
+    c.webhooks = WebhooksState::Ok(vec![WebhookInfo {
         url: "http://example.com/hook".into(),
         has_secret: false,
-    }];
+    }]);
     let o = webhooks_secure::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert_eq!(o.items.len(), 2);
@@ -809,12 +747,21 @@ fn security_policy_absent_fails() {
 }
 
 #[test]
+fn security_policy_unknown_skipped() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.security_md = FilePresence::Unknown;
+    assert_eq!(security_policy::repo_check(&c).status, Status::Skipped);
+}
+
+#[test]
 fn releases_immutable_states() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
     c.release_immutability = ReleaseImmutabilityRepoState::Enabled;
     assert_eq!(releases_immutable::repo_check(&c).status, Status::Pass);
     c.release_immutability = ReleaseImmutabilityRepoState::Disabled;
     assert_eq!(releases_immutable::repo_check(&c).status, Status::Fail);
+    c.release_immutability = ReleaseImmutabilityRepoState::Unknown;
+    assert_eq!(releases_immutable::repo_check(&c).status, Status::Skipped);
 }
 
 #[test]
@@ -829,6 +776,18 @@ fn fork_pr_approval_states() {
     assert_eq!(fork_pr_approval::repo_check(&c).status, Status::Fail);
     c.fork_pr_contributor_approval = ForkPrContributorApprovalState::Other;
     assert_eq!(fork_pr_approval::repo_check(&c).status, Status::Fail);
+    c.fork_pr_contributor_approval = ForkPrContributorApprovalState::Unknown;
+    assert_eq!(fork_pr_approval::repo_check(&c).status, Status::Skipped);
+}
+
+#[test]
+fn pvr_private_repo_is_skipped() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.private = true;
+    c.private_vulnerability_reporting = FeatureState::Disabled;
+    let o = pvr::repo_check(&c);
+    assert_eq!(o.status, Status::Skipped);
+    assert!(o.summary.to_ascii_lowercase().contains("private"));
 }
 
 #[test]
@@ -839,24 +798,31 @@ fn pvr_public_feature_states() {
     assert_eq!(pvr::repo_check(&c).status, Status::Pass);
     c.private_vulnerability_reporting = FeatureState::Disabled;
     assert_eq!(pvr::repo_check(&c).status, Status::Fail);
-    c.private_vulnerability_reporting = FeatureState::PlanGated;
+    c.private_vulnerability_reporting = FeatureState::Unknown;
     assert_eq!(pvr::repo_check(&c).status, Status::Skipped);
 }
 
 #[test]
 fn prt_safe_empty_workflows_skipped() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(Vec::new());
+    c.workflows = bw(WorkflowsState::Loaded(Vec::new()));
+    assert_eq!(prt_safe::repo_check(&c).status, Status::Skipped);
+}
+
+#[test]
+fn prt_safe_no_permission_skipped() {
+    let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
+    c.workflows = bw(WorkflowsState::NoPermission);
     assert_eq!(prt_safe::repo_check(&c).status, Status::Skipped);
 }
 
 #[test]
 fn prt_safe_pull_request_target_with_untrusted_checkout_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "danger.yml",
         "on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n",
-    )]);
+    )]));
     let o = prt_safe::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -869,50 +835,50 @@ fn prt_safe_pull_request_target_with_untrusted_checkout_fails() {
 #[test]
 fn prt_safe_pull_request_target_with_head_ref_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "danger.yml",
         "on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.head_ref }}\n",
-    )]);
+    )]));
     assert_eq!(prt_safe::repo_check(&c).status, Status::Fail);
 }
 
 #[test]
 fn prt_safe_pull_request_target_case_insensitive_checkout_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "danger.yml",
         "on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: Actions/Checkout@v4\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n",
-    )]);
+    )]));
     assert_eq!(prt_safe::repo_check(&c).status, Status::Fail);
 }
 
 #[test]
 fn prt_safe_pull_request_target_third_party_checkout_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "danger.yml",
         "on: pull_request_target\njobs:\n  a:\n    steps:\n      - uses: some-org/checkout/v2@v2\n        with:\n          ref: ${{ github.head_ref }}\n",
-    )]);
+    )]));
     assert_eq!(prt_safe::repo_check(&c).status, Status::Fail);
 }
 
 #[test]
 fn prt_safe_pull_request_target_shell_checkout_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "danger.yml",
         "on: pull_request_target\njobs:\n  a:\n    steps:\n      - run: git fetch origin ${{ github.head_ref }} && git checkout FETCH_HEAD\n",
-    )]);
+    )]));
     assert_eq!(prt_safe::repo_check(&c).status, Status::Fail);
 }
 
 #[test]
 fn prt_safe_pull_request_target_without_checkout_passes() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "safe.yml",
         "on: pull_request_target\njobs:\n  a:\n    steps:\n      - run: echo hi\n",
-    )]);
+    )]));
     assert_eq!(prt_safe::repo_check(&c).status, Status::Pass);
 }
 
@@ -947,33 +913,24 @@ fn linear_history_repo_check_flag_routing() {
 #[test]
 fn workflow_perms_no_workflows_skipped() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(Vec::new());
+    c.workflows = bw(WorkflowsState::Loaded(Vec::new()));
     assert_eq!(workflow_perms::repo_check(&c).status, Status::Skipped);
 }
 
 #[test]
-fn workflow_perms_multi_branch_findings_visible() {
+fn workflow_perms_no_permission_skipped() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = workflows_by_branch(vec![
-        (
-            "main",
-            vec![wf(
-                "ci.yml",
-                "on: push\npermissions: write-all\njobs:\n  a:\n    steps:\n      - run: echo\n",
-            )],
-        ),
-        ("release", Vec::new()),
-    ]);
-    assert_eq!(workflow_perms::repo_check(&c).status, Status::Fail);
+    c.workflows = bw(WorkflowsState::NoPermission);
+    assert_eq!(workflow_perms::repo_check(&c).status, Status::Skipped);
 }
 
 #[test]
 fn workflow_perms_missing_block_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n",
-    )]);
+    )]));
     let o = workflow_perms::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -986,10 +943,10 @@ fn workflow_perms_missing_block_fails() {
 #[test]
 fn workflow_perms_write_all_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\npermissions: write-all\njobs:\n  a:\n    steps:\n      - run: echo\n",
-    )]);
+    )]));
     let o = workflow_perms::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -1002,10 +959,10 @@ fn workflow_perms_write_all_fails() {
 #[test]
 fn workflow_perms_scoped_write_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\npermissions:\n  contents: write\n  issues: read\njobs:\n  a:\n    steps:\n      - run: echo\n",
-    )]);
+    )]));
     let o = workflow_perms::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -1018,20 +975,20 @@ fn workflow_perms_scoped_write_fails() {
 #[test]
 fn workflow_perms_read_only_passes() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\npermissions:\n  contents: read\njobs:\n  a:\n    steps:\n      - run: echo\n",
-    )]);
+    )]));
     assert_eq!(workflow_perms::repo_check(&c).status, Status::Pass);
 }
 
 #[test]
 fn workflow_perms_job_level_write_all_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\npermissions:\n  contents: read\njobs:\n  a:\n    permissions: write-all\n    steps:\n      - run: echo\n",
-    )]);
+    )]));
     let o = workflow_perms::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -1045,10 +1002,10 @@ fn workflow_perms_job_level_write_all_fails() {
 #[test]
 fn workflow_perms_job_level_scoped_write_fails() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\npermissions:\n  contents: read\njobs:\n  release:\n    permissions:\n      contents: write\n      issues: read\n    steps:\n      - run: echo\n",
-    )]);
+    )]));
     let o = workflow_perms::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
     assert!(
@@ -1062,50 +1019,42 @@ fn workflow_perms_job_level_scoped_write_fails() {
 #[test]
 fn workflow_perms_job_level_read_only_passes() {
     let mut c = ctx(BranchProtectionState::Unprotected, WorkflowTokenState::Read);
-    c.workflows = bw(vec![wf(
+    c.workflows = bw(WorkflowsState::Loaded(vec![wf(
         "ci.yml",
         "on: push\npermissions:\n  contents: read\njobs:\n  a:\n    permissions:\n      contents: read\n    steps:\n      - run: echo\n",
-    )]);
+    )]));
     assert_eq!(workflow_perms::repo_check(&c).status, Status::Pass);
 }
 
 #[tokio::test]
-async fn repo_context_fetch_bails_on_forbidden_workflow_token() {
-    let client =
-        happy_path_client().with_forbidden("/repos/acme/demo/actions/permissions/workflow");
-    let sa = SecurityAndAnalysis {
-        secret_scanning: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-        secret_scanning_push_protection: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-    };
-    let err = RepoContext::fetch(&client, "acme", listing(Some("main"), Some(sa)))
+async fn repo_context_fetch_no_default_branch() {
+    let client = FakeGitHubClient::new()
+        .with_forbidden("/repos/acme/demo/actions/permissions/workflow")
+        .with_forbidden("/repos/acme/demo/vulnerability-alerts")
+        .with_forbidden("/repos/acme/demo/automated-security-fixes");
+    let r = RepoContext::fetch(&client, "acme", listing(None, None))
         .await
-        .err()
-        .expect("expected bail on 403");
-    assert!(
-        err.to_string().contains("workflow token"),
-        "unexpected error: {err}"
-    );
+        .unwrap();
+    assert!(r.branch_protections.is_empty());
+    assert!(matches!(r.workflow_token, WorkflowTokenState::Unavailable));
+    assert!(matches!(r.dependabot_alerts, FeatureState::Unknown));
+    assert!(matches!(
+        r.dependabot_security_updates,
+        FeatureState::Unknown
+    ));
 }
 
 #[tokio::test]
 async fn dependabot_security_updates_enabled_when_endpoint_reports_true() {
-    let client = happy_path_client().with_json(
-        "/repos/acme/demo/automated-security-fixes",
-        json!({ "enabled": true, "paused": false }),
-    );
-    let sa = SecurityAndAnalysis {
-        secret_scanning: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-        secret_scanning_push_protection: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-    };
-    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), Some(sa)))
+    let client = FakeGitHubClient::new()
+        .with_not_found("/repos/acme/demo/branches/main/protection")
+        .with_forbidden("/repos/acme/demo/actions/permissions/workflow")
+        .with_not_found("/repos/acme/demo/vulnerability-alerts")
+        .with_json(
+            "/repos/acme/demo/automated-security-fixes",
+            json!({ "enabled": true, "paused": false }),
+        );
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
         .await
         .unwrap();
     assert!(matches!(
@@ -1116,19 +1065,15 @@ async fn dependabot_security_updates_enabled_when_endpoint_reports_true() {
 
 #[tokio::test]
 async fn dependabot_security_updates_disabled_when_endpoint_reports_false() {
-    let client = happy_path_client().with_json(
-        "/repos/acme/demo/automated-security-fixes",
-        json!({ "enabled": false, "paused": false }),
-    );
-    let sa = SecurityAndAnalysis {
-        secret_scanning: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-        secret_scanning_push_protection: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-    };
-    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), Some(sa)))
+    let client = FakeGitHubClient::new()
+        .with_not_found("/repos/acme/demo/branches/main/protection")
+        .with_forbidden("/repos/acme/demo/actions/permissions/workflow")
+        .with_not_found("/repos/acme/demo/vulnerability-alerts")
+        .with_json(
+            "/repos/acme/demo/automated-security-fixes",
+            json!({ "enabled": false, "paused": false }),
+        );
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
         .await
         .unwrap();
     assert!(matches!(
@@ -1139,16 +1084,12 @@ async fn dependabot_security_updates_disabled_when_endpoint_reports_false() {
 
 #[tokio::test]
 async fn dependabot_security_updates_disabled_when_endpoint_404() {
-    let client = happy_path_client().with_not_found("/repos/acme/demo/automated-security-fixes");
-    let sa = SecurityAndAnalysis {
-        secret_scanning: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-        secret_scanning_push_protection: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-    };
-    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), Some(sa)))
+    let client = FakeGitHubClient::new()
+        .with_not_found("/repos/acme/demo/branches/main/protection")
+        .with_forbidden("/repos/acme/demo/actions/permissions/workflow")
+        .with_not_found("/repos/acme/demo/vulnerability-alerts")
+        .with_not_found("/repos/acme/demo/automated-security-fixes");
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
         .await
         .unwrap();
     assert!(matches!(
@@ -1158,22 +1099,17 @@ async fn dependabot_security_updates_disabled_when_endpoint_404() {
 }
 
 #[tokio::test]
-async fn dependabot_security_updates_bails_when_endpoint_forbidden() {
-    let client = happy_path_client().with_forbidden("/repos/acme/demo/automated-security-fixes");
-    let sa = SecurityAndAnalysis {
-        secret_scanning: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-        secret_scanning_push_protection: Some(FeatureStatus {
-            status: "enabled".into(),
-        }),
-    };
-    let err = RepoContext::fetch(&client, "acme", listing(Some("main"), Some(sa)))
+async fn dependabot_security_updates_unknown_when_endpoint_forbidden() {
+    let client = FakeGitHubClient::new()
+        .with_not_found("/repos/acme/demo/branches/main/protection")
+        .with_forbidden("/repos/acme/demo/actions/permissions/workflow")
+        .with_not_found("/repos/acme/demo/vulnerability-alerts")
+        .with_forbidden("/repos/acme/demo/automated-security-fixes");
+    let r = RepoContext::fetch(&client, "acme", listing(Some("main"), None))
         .await
-        .err()
-        .expect("expected bail");
-    assert!(
-        err.to_string().contains("dependabot security updates"),
-        "unexpected error: {err}"
-    );
+        .unwrap();
+    assert!(matches!(
+        r.dependabot_security_updates,
+        FeatureState::Unknown
+    ));
 }

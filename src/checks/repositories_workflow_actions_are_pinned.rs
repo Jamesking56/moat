@@ -2,10 +2,10 @@ use crate::checks::StateCtx;
 use crate::checks::common::{noun, repos_word};
 use crate::checks::repo_context::{RepoContext, SHAPinningState};
 use crate::support::outcome::CheckOutcome;
-use crate::support::workflows;
+use crate::support::workflows::{self, WorkflowsState};
 
 pub const LABEL: &str = "Repositories workflow actions are pinned";
-pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/actions > General actions permissions > *Check* -> Require actions to be pinned to a full-length commit SHA > *Click* -> Save\n\nThen, in each affected workflow file below, replace every tag or branch ref with the full-length commit SHA (keep the tag as a trailing comment for readability). For example:\n```diff\n    - name: Cache dependencies\n-      uses: actions/cache@v5\n+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5\n```\nTip: hand the file list to your coding agent and ask it to pin every `uses:` ref — it can resolve each tag to its commit SHA for you.";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/actions > General actions permissions > __Check__ -> Require actions to be pinned to a full-length commit SHA > __Click__ -> Save\n\nThen, in each affected workflow file below, replace every tag or branch ref with the full-length commit SHA (keep the tag as a trailing comment for readability). For example:\n```diff\n    - name: Cache dependencies\n-      uses: actions/cache@v5\n+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5\n```\nTip: hand the file list to your coding agent and ask it to pin every `uses:` ref — it can resolve each tag to its commit SHA for you.";
 pub const WHY_ENABLE: &str = "Tags and branches are mutable — when tj-actions/changed-files was compromised in 2025, the attacker repointed the existing tags, so every workflow `@v1` instantly ran malicious code; SHA pins make that impossible, and the repo-level \"Require actions to be pinned\" setting prevents anyone from re-introducing unpinned refs. Note: enforcement happens at workflow run time — a push with unpinned `uses:` refs is not rejected, but any workflow it triggers will fail to start until the refs are pinned.";
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
@@ -15,27 +15,33 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     let multi = ctx.workflows.len() > 1;
     let mut unpinned: Vec<String> = Vec::new();
     let mut failing_branches: Vec<String> = Vec::new();
-    let has_workflows = ctx.workflows.has_any_workflows();
+    let mut workflows_unknown_all = !ctx.workflows.is_empty();
+    let mut has_workflows = false;
 
-    for (branch, wfs) in ctx.workflows.iter() {
-        let mut branch_unpinned: Vec<String> = Vec::new();
-        for wf in wfs {
-            for uses in workflows::collect_uses(&wf.doc) {
-                if !workflows::is_pinned(&uses) {
-                    branch_unpinned.push(format!("unpinned ref — {}: {}", wf.path, uses));
+    for (branch, state) in ctx.workflows.iter() {
+        match state {
+            WorkflowsState::Loaded(wfs) => {
+                workflows_unknown_all = false;
+                if !wfs.is_empty() {
+                    has_workflows = true;
+                }
+                let mut branch_unpinned: Vec<String> = Vec::new();
+                for wf in wfs {
+                    for uses in workflows::collect_uses(&wf.doc) {
+                        if !workflows::is_pinned(&uses) {
+                            branch_unpinned.push(format!("unpinned ref — {}: {}", wf.path, uses));
+                        }
+                    }
+                }
+                if !branch_unpinned.is_empty() && !failing_branches.contains(branch) {
+                    failing_branches.push(branch.clone());
+                }
+                for f in branch_unpinned {
+                    unpinned.push(if multi { format!("{branch}: {f}") } else { f });
                 }
             }
+            WorkflowsState::NoPermission => {}
         }
-        if !branch_unpinned.is_empty() && !failing_branches.contains(branch) {
-            failing_branches.push(branch.clone());
-        }
-        for f in branch_unpinned {
-            unpinned.push(if multi { format!("{branch}: {f}") } else { f });
-        }
-    }
-
-    if !has_workflows {
-        return CheckOutcome::skipped("N/a (no workflows)");
     }
 
     if enforced && unpinned.is_empty() {
@@ -65,10 +71,16 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
         return outcome;
     }
 
+    if workflows_unknown_all {
+        return CheckOutcome::skipped("?");
+    }
+    if !has_workflows {
+        return CheckOutcome::skipped("N/a (no workflows)");
+    }
     CheckOutcome::pass("✓ all pinned (enforcement unknown)")
 }
 
-pub fn description(ctx: StateCtx<'_>) -> Option<String> {
+pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
     let mut total_unpinned = 0usize;
     let mut bad_repos = 0usize;
     let mut applicable = 0usize;
@@ -79,7 +91,7 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
         let not_enforced = matches!(r.sha_pinning, SHAPinningState::NotEnforced);
         let has_workflows = r.workflows.has_any_workflows();
 
-        if !has_workflows {
+        if !enforced && !not_enforced && !has_workflows {
             continue;
         }
 
@@ -92,11 +104,13 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
         }
 
         let mut repo_unpinned = 0usize;
-        for (_, wfs) in r.workflows.iter() {
-            for wf in wfs {
-                for uses in workflows::collect_uses(&wf.doc) {
-                    if !workflows::is_pinned(&uses) {
-                        repo_unpinned += 1;
+        for (_, state) in r.workflows.iter() {
+            if let WorkflowsState::Loaded(wfs) = state {
+                for wf in wfs {
+                    for uses in workflows::collect_uses(&wf.doc) {
+                        if !workflows::is_pinned(&uses) {
+                            repo_unpinned += 1;
+                        }
                     }
                 }
             }

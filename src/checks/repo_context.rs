@@ -1,4 +1,4 @@
-use crate::checks::common::{self, CollaboratorEntry, permission_error};
+use crate::checks::common::{self, CollaboratorEntry};
 use crate::config::{Config, InvalidConfigError};
 use crate::support::github::{Fetch, Fetch403, GitHubClient};
 use crate::support::outcome::CheckOutcome;
@@ -7,21 +7,23 @@ use anyhow::Result;
 use futures::future::try_join_all;
 use serde::Deserialize;
 
-pub use crate::checks::common::{FeatureState, FilePresence, WebhookInfo, WorkflowTokenState};
+pub use crate::checks::common::{
+    FeatureState, FilePresence, WebhookInfo, WebhooksState, WorkflowTokenState,
+};
 pub use crate::checks::org_context::ForkPrContributorApprovalState;
 
 #[derive(Clone, Copy)]
 pub enum ReleaseImmutabilityRepoState {
     Enabled,
     Disabled,
-    PlanGated,
+    Unknown,
 }
 
 #[derive(Clone, Copy)]
 pub enum SHAPinningState {
     Enforced,
     NotEnforced,
-    PlanGated,
+    Unknown,
 }
 
 async fn traced<F, T>(repo: &str, label: &str, fut: F) -> T
@@ -46,8 +48,8 @@ pub struct RepoContext {
     pub workflows: BranchedWorkflows,
     pub security_md: FilePresence,
     pub dependabot_config: DependabotConfigState,
-    pub webhooks: Vec<WebhookInfo>,
-    pub direct_collaborators: Vec<String>,
+    pub webhooks: WebhooksState,
+    pub direct_collaborators: DirectCollaboratorsState,
     pub release_immutability: ReleaseImmutabilityRepoState,
     pub fork_pr_contributor_approval: ForkPrContributorApprovalState,
     pub sha_pinning: SHAPinningState,
@@ -68,6 +70,7 @@ pub enum BranchProtectionState {
         allow_deletions: bool,
     },
     Unprotected,
+    NoPermission,
     PlanGated,
 }
 
@@ -112,6 +115,7 @@ impl BranchProtections {
         let multi = self.branches.len() > 1;
         let mut failures: Vec<String> = Vec::new();
         let mut failing_branches: Vec<String> = Vec::new();
+        let mut any_unknown = false;
         let mut any_plan_gated = false;
         let mut any_pass = false;
         for (name, state) in &self.branches {
@@ -133,6 +137,7 @@ impl BranchProtections {
                         }
                     }
                 }
+                BranchEval::Unknown => any_unknown = true,
                 BranchEval::PlanGated => any_plan_gated = true,
             }
         }
@@ -147,6 +152,8 @@ impl BranchProtections {
             CheckOutcome::pass("✓")
         } else if any_plan_gated {
             CheckOutcome::skipped("N/a (plan)")
+        } else if any_unknown {
+            CheckOutcome::skipped("?")
         } else {
             CheckOutcome::pass("✓")
         }
@@ -155,7 +162,7 @@ impl BranchProtections {
     /// Aggregate a single boolean flag across release branches. `pick` returns
     /// `Some(true)` to pass, `Some(false)` to fail with no detail, and `None`
     /// when the state isn't `Protected` (the helper supplies the standard
-    /// mapping for Unprotected/PlanGated).
+    /// mapping for Unprotected/NoPermission/PlanGated).
     pub fn aggregate_flag<F>(&self, pick: F) -> CheckOutcome
     where
         F: Fn(&BranchProtectionState) -> Option<bool>,
@@ -165,6 +172,7 @@ impl BranchProtections {
             Some(false) => BranchEval::Fail(Vec::new()),
             None => match state {
                 BranchProtectionState::Unprotected => BranchEval::Fail(Vec::new()),
+                BranchProtectionState::NoPermission => BranchEval::Unknown,
                 BranchProtectionState::PlanGated => BranchEval::PlanGated,
                 BranchProtectionState::Protected { .. } => unreachable!(),
             },
@@ -175,12 +183,19 @@ impl BranchProtections {
 pub enum BranchEval {
     Pass,
     Fail(Vec<String>),
+    Unknown,
     PlanGated,
 }
 
 pub enum DependabotConfigState {
     Ok { github_actions: bool },
     Missing,
+    Unknown,
+}
+
+pub enum DirectCollaboratorsState {
+    Ok(Vec<String>),
+    NoPermission,
 }
 
 #[derive(Deserialize, Clone)]
@@ -248,15 +263,30 @@ struct WorkflowPerms {
 
 impl RepoContext {
     pub async fn fetch(client: &impl GitHubClient, org: &str, repo: RepoListing) -> Result<Self> {
-        // Forks are filtered out before fetch (see runner::list_repos and
-        // org_context::fetch_repo_briefs); if one slips through, refuse to
-        // audit it — fork settings are derived from upstream and we can't
-        // evaluate them in isolation.
         if repo.fork {
-            return Err(anyhow::anyhow!(
-                "`{org}/{}` is a fork — moat does not audit forks (their settings inherit from upstream)",
-                repo.name
-            ));
+            return Ok(Self {
+                name: repo.name,
+                archived: repo.archived,
+                private: repo.private,
+                default_branch: repo.default_branch,
+                branch_protections: BranchProtections::none(),
+                workflow_token: WorkflowTokenState::Unavailable,
+                secret_scanning: FeatureState::Unknown,
+                push_protection: FeatureState::Unknown,
+                dependabot_alerts: FeatureState::Unknown,
+                dependabot_security_updates: FeatureState::Unknown,
+                private_vulnerability_reporting: FeatureState::Unknown,
+                workflows: BranchedWorkflows::empty(),
+                security_md: FilePresence::Unknown,
+                dependabot_config: DependabotConfigState::Unknown,
+                webhooks: WebhooksState::NoPermission,
+                direct_collaborators: DirectCollaboratorsState::NoPermission,
+                release_immutability: ReleaseImmutabilityRepoState::Unknown,
+                fork_pr_contributor_approval: ForkPrContributorApprovalState::Unknown,
+                sha_pinning: SHAPinningState::Unknown,
+                codeowners: FilePresence::Unknown,
+                config: Config::default(),
+            });
         }
 
         let config = traced(&repo.name, "config", fetch_config(client, org, &repo.name)).await?;
@@ -331,7 +361,7 @@ impl RepoContext {
             traced(
                 &repo.name,
                 "webhooks",
-                common::fetch_webhooks(client, &webhooks_path, org, Some(&repo.name)),
+                common::fetch_webhooks(client, &webhooks_path),
             ),
             traced(
                 &repo.name,
@@ -346,7 +376,7 @@ impl RepoContext {
             traced(
                 &repo.name,
                 "fork PR contributor approval",
-                fetch_fork_pr_contributor_approval(client, org, &repo.name, repo.private),
+                fetch_fork_pr_contributor_approval(client, org, &repo.name),
             ),
             traced(
                 &repo.name,
@@ -363,20 +393,9 @@ impl RepoContext {
         let branch_protections = BranchProtections { branches };
 
         let plan_gated = repo.private && branch_protections.any_plan_gated();
-        let secret_scanning = pick_feature(
-            &repo,
-            |s| &s.secret_scanning,
-            plan_gated,
-            "secret scanning",
-            org,
-        )?;
-        let push_protection = pick_feature(
-            &repo,
-            |s| &s.secret_scanning_push_protection,
-            plan_gated,
-            "secret push protection",
-            org,
-        )?;
+        let secret_scanning = pick_feature(&repo, |s| &s.secret_scanning, plan_gated);
+        let push_protection =
+            pick_feature(&repo, |s| &s.secret_scanning_push_protection, plan_gated);
 
         Ok(Self {
             name: repo.name,
@@ -414,21 +433,16 @@ async fn fetch_release_immutability(
     org: &str,
     repo: &str,
 ) -> Result<ReleaseImmutabilityRepoState> {
-    match client
-        .get_json_plan_aware::<ImmutableReleasesRepo>(&format!(
-            "/repos/{org}/{repo}/immutable-releases"
-        ))
-        .await?
-    {
-        Fetch403::Ok(r) if r.enabled => Ok(ReleaseImmutabilityRepoState::Enabled),
-        Fetch403::Ok(_) => Ok(ReleaseImmutabilityRepoState::Disabled),
-        Fetch403::PlanGated => Ok(ReleaseImmutabilityRepoState::PlanGated),
-        Fetch403::NotFound | Fetch403::Forbidden => Err(permission_error(
-            "release immutability setting",
-            org,
-            Some(repo),
-        )),
-    }
+    Ok(
+        match client
+            .get_json::<ImmutableReleasesRepo>(&format!("/repos/{org}/{repo}/immutable-releases"))
+            .await?
+        {
+            Fetch::Ok(r) if r.enabled => ReleaseImmutabilityRepoState::Enabled,
+            Fetch::Ok(_) => ReleaseImmutabilityRepoState::Disabled,
+            Fetch::NotFound | Fetch::Forbidden => ReleaseImmutabilityRepoState::Unknown,
+        },
+    )
 }
 
 #[derive(Deserialize)]
@@ -440,43 +454,30 @@ async fn fetch_fork_pr_contributor_approval(
     client: &impl GitHubClient,
     org: &str,
     repo: &str,
-    private: bool,
 ) -> Result<ForkPrContributorApprovalState> {
-    // Fork PR approval doesn't apply to private repos — the API returns a 422
-    // "Fork PR approval is not allowed for private repositories." Skip the call.
-    if private {
-        return Ok(ForkPrContributorApprovalState::PlanGated);
-    }
-    match client
-        .get_json_plan_aware::<ForkPrApprovalRepo>(&format!(
-            "/repos/{org}/{repo}/actions/permissions/fork-pr-contributor-approval"
-        ))
-        .await?
-    {
-        Fetch403::Ok(r) => match r.approval_policy.as_deref() {
-            Some("all_external_contributors") => {
-                Ok(ForkPrContributorApprovalState::AllExternalContributors)
-            }
-            Some("first_time_contributors") => {
-                Ok(ForkPrContributorApprovalState::FirstTimeContributors)
-            }
-            Some("first_time_contributors_new_to_github") => {
-                Ok(ForkPrContributorApprovalState::FirstTimeContributorsNewToGithub)
-            }
-            Some(_) => Ok(ForkPrContributorApprovalState::Other),
-            None => Err(permission_error(
-                "fork PR contributor approval policy",
-                org,
-                Some(repo),
-            )),
+    Ok(
+        match client
+            .get_json::<ForkPrApprovalRepo>(&format!(
+                "/repos/{org}/{repo}/actions/permissions/fork-pr-contributor-approval"
+            ))
+            .await?
+        {
+            Fetch::Ok(r) => match r.approval_policy.as_deref() {
+                Some("all_external_contributors") => {
+                    ForkPrContributorApprovalState::AllExternalContributors
+                }
+                Some("first_time_contributors") => {
+                    ForkPrContributorApprovalState::FirstTimeContributors
+                }
+                Some("first_time_contributors_new_to_github") => {
+                    ForkPrContributorApprovalState::FirstTimeContributorsNewToGithub
+                }
+                Some(_) => ForkPrContributorApprovalState::Other,
+                None => ForkPrContributorApprovalState::Unknown,
+            },
+            Fetch::NotFound | Fetch::Forbidden => ForkPrContributorApprovalState::Unknown,
         },
-        Fetch403::PlanGated => Ok(ForkPrContributorApprovalState::PlanGated),
-        Fetch403::NotFound | Fetch403::Forbidden => Err(permission_error(
-            "fork PR contributor approval policy",
-            org,
-            Some(repo),
-        )),
-    }
+    )
 }
 
 #[derive(Deserialize)]
@@ -490,28 +491,19 @@ async fn fetch_sha_pinning(
     org: &str,
     repo: &str,
 ) -> Result<SHAPinningState> {
-    match client
-        .get_json_plan_aware::<ActionsPermissions>(&format!(
-            "/repos/{org}/{repo}/actions/permissions"
-        ))
-        .await?
-    {
-        Fetch403::Ok(p) => match p.sha_pinning_required {
-            Some(true) => Ok(SHAPinningState::Enforced),
-            Some(false) => Ok(SHAPinningState::NotEnforced),
-            None => Err(permission_error(
-                "actions SHA pinning setting",
-                org,
-                Some(repo),
-            )),
+    Ok(
+        match client
+            .get_json::<ActionsPermissions>(&format!("/repos/{org}/{repo}/actions/permissions"))
+            .await?
+        {
+            Fetch::Ok(p) => match p.sha_pinning_required {
+                Some(true) => SHAPinningState::Enforced,
+                Some(false) => SHAPinningState::NotEnforced,
+                None => SHAPinningState::Unknown,
+            },
+            Fetch::NotFound | Fetch::Forbidden => SHAPinningState::Unknown,
         },
-        Fetch403::PlanGated => Ok(SHAPinningState::PlanGated),
-        Fetch403::NotFound | Fetch403::Forbidden => Err(permission_error(
-            "actions SHA pinning setting",
-            org,
-            Some(repo),
-        )),
-    }
+    )
 }
 
 async fn fetch_branch_protection(
@@ -574,13 +566,7 @@ async fn fetch_branch_protection(
             allow_deletions: !rules.deletion,
         },
         Fetch403::NotFound => BranchProtectionState::Unprotected,
-        Fetch403::Forbidden => {
-            return Err(permission_error(
-                &format!("branch protection for `{branch}`"),
-                org,
-                Some(repo),
-            ));
-        }
+        Fetch403::Forbidden => BranchProtectionState::NoPermission,
         Fetch403::PlanGated => BranchProtectionState::PlanGated,
     })
 }
@@ -625,18 +611,9 @@ async fn fetch_branch_rules(
     branch: &str,
 ) -> Result<RulesetFlags> {
     let path = format!("/repos/{org}/{repo}/rules/branches/{branch}");
-    let entries = match client.get_json_plan_aware::<Vec<RuleEntry>>(&path).await? {
-        Fetch403::Ok(v) => v,
-        // Private repos on Free plan return 403 "Upgrade to GitHub Pro" — plan gate, not perms.
-        Fetch403::PlanGated => return Ok(RulesetFlags::default()),
-        Fetch403::NotFound => return Ok(RulesetFlags::default()),
-        Fetch403::Forbidden => {
-            return Err(permission_error(
-                &format!("branch rules for `{branch}`"),
-                org,
-                Some(repo),
-            ));
-        }
+    let entries = match client.get_json::<Vec<RuleEntry>>(&path).await? {
+        Fetch::Ok(v) => v,
+        Fetch::NotFound | Fetch::Forbidden => return Ok(RulesetFlags::default()),
     };
     let mut flags = RulesetFlags::default();
     for entry in entries {
@@ -705,18 +682,16 @@ async fn fetch_workflow_token(
     org: &str,
     repo: &str,
 ) -> Result<WorkflowTokenState> {
-    match client
-        .get_json::<WorkflowPerms>(&format!("/repos/{org}/{repo}/actions/permissions/workflow"))
-        .await?
-    {
-        Fetch::Ok(w) if w.default_workflow_permissions == "read" => Ok(WorkflowTokenState::Read),
-        Fetch::Ok(_) => Ok(WorkflowTokenState::Write),
-        Fetch::NotFound | Fetch::Forbidden => Err(permission_error(
-            "workflow token permissions",
-            org,
-            Some(repo),
-        )),
-    }
+    Ok(
+        match client
+            .get_json::<WorkflowPerms>(&format!("/repos/{org}/{repo}/actions/permissions/workflow"))
+            .await?
+        {
+            Fetch::Ok(w) if w.default_workflow_permissions == "read" => WorkflowTokenState::Read,
+            Fetch::Ok(_) => WorkflowTokenState::Write,
+            _ => WorkflowTokenState::Unavailable,
+        },
+    )
 }
 
 async fn fetch_dependabot_alerts(
@@ -724,15 +699,16 @@ async fn fetch_dependabot_alerts(
     org: &str,
     repo: &str,
 ) -> Result<FeatureState> {
-    match client
-        .get_presence_plan_aware(&format!("/repos/{org}/{repo}/vulnerability-alerts"))
-        .await?
-    {
-        Fetch403::Ok(_) => Ok(FeatureState::Enabled),
-        Fetch403::NotFound => Ok(FeatureState::Disabled),
-        Fetch403::PlanGated => Ok(FeatureState::PlanGated),
-        Fetch403::Forbidden => Err(permission_error("dependabot alerts", org, Some(repo))),
-    }
+    Ok(
+        match client
+            .get_presence(&format!("/repos/{org}/{repo}/vulnerability-alerts"))
+            .await?
+        {
+            Fetch::Ok(_) => FeatureState::Enabled,
+            Fetch::NotFound => FeatureState::Disabled,
+            Fetch::Forbidden => FeatureState::Unknown,
+        },
+    )
 }
 
 #[derive(Deserialize)]
@@ -745,22 +721,19 @@ async fn fetch_dependabot_security_updates(
     org: &str,
     repo: &str,
 ) -> Result<FeatureState> {
-    match client
-        .get_json_plan_aware::<AutomatedSecurityFixes>(&format!(
-            "/repos/{org}/{repo}/automated-security-fixes"
-        ))
-        .await?
-    {
-        Fetch403::Ok(r) if r.enabled => Ok(FeatureState::Enabled),
-        Fetch403::Ok(_) => Ok(FeatureState::Disabled),
-        Fetch403::NotFound => Ok(FeatureState::Disabled),
-        Fetch403::PlanGated => Ok(FeatureState::PlanGated),
-        Fetch403::Forbidden => Err(permission_error(
-            "dependabot security updates",
-            org,
-            Some(repo),
-        )),
-    }
+    Ok(
+        match client
+            .get_json::<AutomatedSecurityFixes>(&format!(
+                "/repos/{org}/{repo}/automated-security-fixes"
+            ))
+            .await?
+        {
+            Fetch::Ok(r) if r.enabled => FeatureState::Enabled,
+            Fetch::Ok(_) => FeatureState::Disabled,
+            Fetch::NotFound => FeatureState::Disabled,
+            Fetch::Forbidden => FeatureState::Unknown,
+        },
+    )
 }
 
 #[derive(Deserialize)]
@@ -774,27 +747,22 @@ async fn fetch_private_vulnerability_reporting(
     repo: &str,
     private: bool,
 ) -> Result<FeatureState> {
-    // Private repos can't accept private vuln reports — leave this as a benign
-    // PlanGated which `applies_to_repo: public_only` already filters out.
     if private {
-        return Ok(FeatureState::PlanGated);
+        return Ok(FeatureState::Unknown);
     }
-    match client
-        .get_json_plan_aware::<PrivateVulnReporting>(&format!(
-            "/repos/{org}/{repo}/private-vulnerability-reporting"
-        ))
-        .await?
-    {
-        Fetch403::Ok(p) if p.enabled => Ok(FeatureState::Enabled),
-        Fetch403::Ok(_) => Ok(FeatureState::Disabled),
-        Fetch403::NotFound => Ok(FeatureState::Disabled),
-        Fetch403::PlanGated => Ok(FeatureState::PlanGated),
-        Fetch403::Forbidden => Err(permission_error(
-            "private vulnerability reporting",
-            org,
-            Some(repo),
-        )),
-    }
+    Ok(
+        match client
+            .get_json::<PrivateVulnReporting>(&format!(
+                "/repos/{org}/{repo}/private-vulnerability-reporting"
+            ))
+            .await?
+        {
+            Fetch::Ok(p) if p.enabled => FeatureState::Enabled,
+            Fetch::Ok(_) => FeatureState::Disabled,
+            Fetch::NotFound => FeatureState::Disabled,
+            Fetch::Forbidden => FeatureState::Unknown,
+        },
+    )
 }
 
 async fn fetch_config(client: &impl GitHubClient, org: &str, repo: &str) -> Result<Config> {
@@ -822,23 +790,21 @@ fn pick_feature(
     repo: &RepoListing,
     pick: impl Fn(&SecurityAndAnalysis) -> &Option<FeatureStatus>,
     plan_gated: bool,
-    resource: &str,
-    org: &str,
-) -> Result<FeatureState> {
+) -> FeatureState {
     let Some(sa) = &repo.security_and_analysis else {
         return if plan_gated {
-            Ok(FeatureState::PlanGated)
+            FeatureState::PlanGated
         } else {
-            Err(permission_error(resource, org, Some(&repo.name)))
+            FeatureState::Unknown
         };
     };
-    Ok(match pick(sa) {
+    match pick(sa) {
         Some(f) if f.status == "enabled" => FeatureState::Enabled,
         Some(_) if plan_gated => FeatureState::PlanGated,
         Some(_) => FeatureState::Disabled,
         None if plan_gated => FeatureState::PlanGated,
-        None => return Err(permission_error(resource, org, Some(&repo.name))),
-    })
+        None => FeatureState::Unknown,
+    }
 }
 
 async fn fetch_dependabot_config(
@@ -855,7 +821,7 @@ async fn fetch_dependabot_config(
                 let github_actions = parse_has_github_actions(&text);
                 return Ok(DependabotConfigState::Ok { github_actions });
             }
-            Fetch::Forbidden => return Err(permission_error("dependabot config", org, Some(repo))),
+            Fetch::Forbidden => return Ok(DependabotConfigState::Unknown),
             Fetch::NotFound => {}
         }
     }
@@ -887,20 +853,19 @@ async fn fetch_direct_collaborators(
     org: &str,
     repo: &str,
     private: bool,
-) -> Result<Vec<String>> {
+) -> Result<DirectCollaboratorsState> {
     match client
         .get_paginated::<CollaboratorEntry>(&format!(
             "/repos/{org}/{repo}/collaborators?affiliation=direct"
         ))
         .await?
     {
-        Fetch::Ok(v) => Ok(v
-            .into_iter()
-            .filter(|c| private || c.permissions.is_more_than_read())
-            .map(|c| c.login)
-            .collect()),
-        Fetch::Forbidden | Fetch::NotFound => {
-            Err(permission_error("direct collaborators", org, Some(repo)))
-        }
+        Fetch::Ok(v) => Ok(DirectCollaboratorsState::Ok(
+            v.into_iter()
+                .filter(|c| private || c.permissions.is_more_than_read())
+                .map(|c| c.login)
+                .collect(),
+        )),
+        Fetch::Forbidden | Fetch::NotFound => Ok(DirectCollaboratorsState::NoPermission),
     }
 }
