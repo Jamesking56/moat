@@ -5,7 +5,7 @@ use crate::checks::repo_context::{ReleaseImmutabilityRepoState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories releases are immutable";
-pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/repository-defaults > Releases > __Select__ -> All repositories";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/repository-defaults > Releases > *Select* -> All repositories";
 pub const WHY_ENABLE: &str = "Without immutability, an existing tag can be moved or its assets replaced after the fact; downstream consumers pinned to a version they audited will silently fetch different bytes the next time they install.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
@@ -15,7 +15,6 @@ pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
             CheckOutcome::warn("Enforced on selected repositories only")
         }
         ReleaseImmutabilityState::None => CheckOutcome::fail("Not enforced"),
-        ReleaseImmutabilityState::Unknown => CheckOutcome::skipped("Unknown"),
     }
 }
 
@@ -23,11 +22,11 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     match ctx.release_immutability {
         ReleaseImmutabilityRepoState::Enabled => CheckOutcome::pass("✓"),
         ReleaseImmutabilityRepoState::Disabled => CheckOutcome::fail("✗"),
-        ReleaseImmutabilityRepoState::Unknown => CheckOutcome::skipped("?"),
+        ReleaseImmutabilityRepoState::PlanGated => CheckOutcome::skipped("N/a (plan)"),
     }
 }
 
-pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
+pub fn description(ctx: StateCtx<'_>) -> Option<String> {
     let total = ctx.repos.len();
     let disabled = ctx
         .repos
@@ -39,15 +38,18 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
             )
         })
         .count();
-    let org = ctx.org.and_then(|o| match o.release_immutability {
-        ReleaseImmutabilityState::All => Some("all"),
-        ReleaseImmutabilityState::Selected => Some("selected"),
-        ReleaseImmutabilityState::None => Some("none"),
-        ReleaseImmutabilityState::Unknown => None,
+    let org = ctx.org.map(|o| match o.release_immutability {
+        ReleaseImmutabilityState::All => "all",
+        ReleaseImmutabilityState::Selected => "selected",
+        ReleaseImmutabilityState::None => "none",
     });
 
+    if total == 0 {
+        return None;
+    }
+
     Some(match (org, disabled) {
-        (Some("all"), 0) if total > 0 => format!(
+        (Some("all"), 0) => format!(
             "immutable releases are enforced org-wide and on all {total} {}",
             repos_word(total)
         ),
@@ -59,20 +61,19 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
             "immutable releases are enforced on selected repositories only; {n}/{total} {} allow tag and asset replacement",
             repos_word(total)
         ),
-        (Some("none"), 0) if total > 0 => format!(
+        (Some("none"), 0) => format!(
             "immutable releases are not enforced org-wide, though all {total} {} have it enabled",
             repos_word(total)
         ),
-        (Some("none"), n) if n > 0 => format!(
+        (Some("none"), n) => format!(
             "immutable releases are not enforced org-wide; {n}/{total} {} allow tag and asset replacement",
             repos_word(total)
         ),
-        (Some("none"), _) => "immutable releases are not enforced org-wide".into(),
-        (None, 0) if total > 0 => format!(
+        (None, 0) => format!(
             "immutable releases are enabled on all {total} {}",
             repos_word(total)
         ),
-        (None, n) if n > 0 => format!(
+        (None, n) => format!(
             "{n}/{total} {} allow tag and asset replacement",
             repos_word(total)
         ),

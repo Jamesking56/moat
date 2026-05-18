@@ -3,11 +3,11 @@ use crate::checks::common::repos_word;
 use crate::checks::repo_context::{DependabotConfigState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 pub const LABEL: &str = "Repositories have dependabot config";
-pub const HOW_TO_FIX: &str = "In each affected repository below > __Add__ -> `.github/dependabot.yml` > __Enable__ -> The `github-actions` ecosystem with the following content:\n```yaml\nversion: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: weekly\n```";
+pub const HOW_TO_FIX: &str = "In each affected repository below > *Add* -> `.github/dependabot.yml` > *Enable* -> The `github-actions` ecosystem with the following content:\n```yaml\nversion: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: weekly\n```";
 pub const WHY_ENABLE: &str = "Pinning actions to SHAs is only safe if something keeps them up to date; without Dependabot the pins rot and either get bumped to a tag (defeating the pin) or stay stuck on a known-vulnerable revision.";
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
-    if ctx.workflows.all_branches_empty() {
+    if !ctx.workflows.has_any_workflows() {
         return CheckOutcome::skipped("N/a");
     }
 
@@ -20,16 +20,15 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
             }
         }
         DependabotConfigState::Missing => CheckOutcome::fail("Missing"),
-        DependabotConfigState::Unknown => CheckOutcome::skipped("?"),
     }
 }
 
-pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
+pub fn description(ctx: StateCtx<'_>) -> Option<String> {
     let mut applicable = 0usize;
     let mut missing = 0usize;
     let mut without_actions = 0usize;
     for r in ctx.repos {
-        if r.workflows.all_branches_empty() {
+        if !r.workflows.has_any_workflows() {
             continue;
         }
         applicable += 1;

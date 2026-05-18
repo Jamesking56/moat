@@ -7,7 +7,8 @@ pub struct CheckOutcome {
     pub failing_branches: Vec<String>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Status {
     Pass,
     Fail,

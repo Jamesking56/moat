@@ -10,11 +10,10 @@ pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     match ctx.two_factor_required {
         TwoFactorState::Required => CheckOutcome::pass("Required for every member"),
         TwoFactorState::NotRequired => CheckOutcome::fail("Not required"),
-        TwoFactorState::Unknown => CheckOutcome::skipped("Unknown"),
     }
 }
 
-pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
+pub fn description(ctx: StateCtx<'_>) -> Option<String> {
     let org = ctx.org?;
     Some(match org.two_factor_required {
         TwoFactorState::Required => {
@@ -23,6 +22,5 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
         TwoFactorState::NotRequired => {
             "members can sign in without two-factor authentication".into()
         }
-        TwoFactorState::Unknown => return None,
     })
 }

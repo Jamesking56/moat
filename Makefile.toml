@@ -50,6 +50,12 @@ install_crate = { crate_name = "cargo-audit", binary = "cargo-audit", test_arg =
 command = "cargo"
 args = ["audit"]
 
+[tasks."test:deny"]
+description = "Check dependency advisories, licenses, bans, and sources"
+install_crate = { crate_name = "cargo-deny", binary = "cargo-deny", test_arg = "--version", version = "0.19.6" }
+command = "cargo"
+args = ["deny", "check"]
+
 [tasks."test:vet"]
 description = "Check dependencies against the cargo-vet supply-chain audits"
 install_crate = { crate_name = "cargo-vet", binary = "cargo-vet", test_arg = "--version" }
@@ -61,6 +67,18 @@ description = "Check for typos across the codebase"
 install_crate = { crate_name = "typos-cli", binary = "typos", test_arg = "--version", version = "1.42.3" }
 command = "typos"
 
+[tasks."test:machete"]
+description = "Check for unused Cargo dependencies"
+install_crate = { crate_name = "cargo-machete", binary = "cargo-machete", test_arg = "--version", version = "0.9.1" }
+command = "cargo"
+args = ["machete"]
+
+[tasks."test:coverage"]
+description = "Run tests with coverage instrumentation"
+install_crate = { crate_name = "cargo-llvm-cov", binary = "cargo-llvm-cov", test_arg = "--version", version = "0.6.21" }
+command = "cargo"
+args = ["llvm-cov", "--all-features", "--locked"]
+
 [tasks."test:msrv"]
 description = "Check that the crate builds on the declared MSRV (1.88)"
 script_runner = "@shell"
@@ -71,8 +89,18 @@ cargo +1.88.0 check --all-targets --locked
 # ─── The umbrella task ────────────────────────────────────────────────────────
 
 [tasks.test]
-description = "Run every check: lint + unit + audit + vet + typos"
-dependencies = ["test:lint", "test:unit", "test:audit", "test:vet", "test:typos"]
+description = "Run every check: lint + unit + audit + deny + vet + typos + machete + coverage + msrv"
+dependencies = [
+    "test:lint",
+    "test:unit",
+    "test:audit",
+    "test:deny",
+    "test:vet",
+    "test:typos",
+    "test:machete",
+    "test:coverage",
+    "test:msrv",
+]
 
 [tasks.default]
 alias = "test"

@@ -1,7 +1,7 @@
 use crate::support::github::{Fetch, GitHubClient};
 use crate::support::outcome::CheckOutcome;
 use crate::support::panel;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use serde::Deserialize;
 
 pub(crate) async fn traced<F, T>(prefix: Option<&str>, label: &str, fut: F) -> T
@@ -36,20 +36,47 @@ pub fn public_repos_word(count: usize) -> &'static str {
     }
 }
 
+/// Build an error for the case where moat hit a 403 / 404 it doesn't know how
+/// to recover from. `NoPermission` and `Unknown` states are not supposed to
+/// reach the evaluation layer — when they do, we bail out so the operator can
+/// fix their token scopes (or report a missing handler).
+pub fn permission_error(resource: &str, owner: &str, repo: Option<&str>) -> anyhow::Error {
+    let target = match repo {
+        Some(r) => format!("{owner}/{r}"),
+        None => owner.to_string(),
+    };
+    anyhow!(
+        "missing permission to read {resource} for `{target}` — check that your token has the required scopes (`admin:org`, `repo`, `read:user`, `workflow`) and that the account is an organization admin",
+    )
+}
+
 /// Build a "currently:" phrase for a feature with both an org-default and a
 /// per-repo toggle (e.g. secret scanning, push protection, dependabot alerts).
 ///
 /// `feature` names the feature in user terms (e.g. "secret scanning").
-/// `repo_off` returns true if the feature is *disabled* on a given repo.
+/// `repo_state` returns the per-repo `FeatureState`. The denominator only
+/// counts repos where the state is `Enabled` or `Disabled` — `PlanGated` maps
+/// to a `Skipped` aggregate that the summary excludes too.
 /// `org_off` returns true if the org default is *disabled* / not set.
 pub fn feature_state_phrase(
     feature: &str,
     repos: &[&crate::checks::RepoContext],
-    repo_off: impl Fn(&crate::checks::RepoContext) -> bool,
+    repo_state: impl Fn(&crate::checks::RepoContext) -> FeatureState,
     org_off: Option<bool>,
 ) -> Option<String> {
-    let total = repos.len();
-    let off = repos.iter().filter(|r| repo_off(r)).count();
+    let total = repos
+        .iter()
+        .filter(|r| {
+            matches!(
+                repo_state(r),
+                FeatureState::Enabled | FeatureState::Disabled
+            )
+        })
+        .count();
+    let off = repos
+        .iter()
+        .filter(|r| matches!(repo_state(r), FeatureState::Disabled))
+        .count();
     Some(match (org_off, off) {
         (Some(false), 0) if total > 0 => format!(
             "{feature} is enabled by default and on all {total} {}",
@@ -76,6 +103,26 @@ pub fn feature_state_phrase(
     })
 }
 
+/// Number of repos with at least one release branch we could actually inspect
+/// (state is `Protected` or `Unprotected`). Repos whose every release branch
+/// came back `PlanGated` are excluded — they correspond to the `Skipped`
+/// aggregates that the summary line subtracts from its denominator, so
+/// descriptions sharing this denominator match the headline count.
+pub fn inspectable_branch_protection_repos(repos: &[&crate::checks::RepoContext]) -> usize {
+    use crate::checks::repo_context::BranchProtectionState;
+    repos
+        .iter()
+        .filter(|r| {
+            r.branch_protections.branches.iter().any(|(_, s)| {
+                matches!(
+                    s,
+                    BranchProtectionState::Protected { .. } | BranchProtectionState::Unprotected
+                )
+            })
+        })
+        .count()
+}
+
 /// Build a "currently:" phrase for a ruleset-style requirement (e.g. signed
 /// commits, linear history, required reviews) where the org enforces it via a
 /// ruleset and each repo enforces it via branch protection on release branches.
@@ -88,7 +135,7 @@ pub fn ruleset_state_phrase<F>(
 where
     F: Fn(&crate::checks::repo_context::BranchProtectionState) -> Option<bool>,
 {
-    let total = repos.len();
+    let total = inspectable_branch_protection_repos(repos);
     let missing = count_repos_missing_branch_flag(repos, pick);
     Some(match (org_required, missing) {
         (Some(true), 0) if total > 0 => format!(
@@ -121,8 +168,7 @@ where
 }
 
 /// Count repos where the chosen branch-protection flag is missing (false or
-/// branch unprotected). Branches we can't inspect (NoPermission, PlanGated)
-/// are skipped.
+/// branch unprotected). Branches we can't inspect (PlanGated) are skipped.
 pub fn count_repos_missing_branch_flag<F>(repos: &[&crate::checks::RepoContext], pick: F) -> usize
 where
     F: Fn(&crate::checks::repo_context::BranchProtectionState) -> Option<bool>,
@@ -153,14 +199,12 @@ where
 pub enum WorkflowTokenState {
     Read,
     Write,
-    Unavailable,
 }
 
 #[derive(Clone, Copy)]
 pub enum FeatureState {
     Enabled,
     Disabled,
-    Unknown,
     PlanGated,
 }
 
@@ -169,7 +213,6 @@ impl FeatureState {
         match self {
             FeatureState::Enabled => CheckOutcome::pass("✓"),
             FeatureState::Disabled => CheckOutcome::fail("✗"),
-            FeatureState::Unknown => CheckOutcome::skipped("?"),
             FeatureState::PlanGated => CheckOutcome::skipped("N/a (plan)"),
         }
     }
@@ -178,12 +221,6 @@ impl FeatureState {
 pub enum FilePresence {
     Present,
     Absent,
-    Unknown,
-}
-
-pub enum WebhooksState {
-    Ok(Vec<WebhookInfo>),
-    NoPermission,
 }
 
 #[derive(Clone)]
@@ -208,26 +245,28 @@ struct WebhookConfig {
 pub(crate) async fn fetch_webhooks(
     client: &impl GitHubClient,
     path: &str,
-) -> Result<WebhooksState> {
+    owner: &str,
+    repo: Option<&str>,
+) -> Result<Vec<WebhookInfo>> {
     match client.get_paginated::<Webhook>(path).await? {
-        Fetch::Ok(v) => Ok(WebhooksState::Ok(
-            v.into_iter()
-                .map(|h| WebhookInfo {
-                    url: h.config.url.unwrap_or_default(),
-                    has_secret: h.config.secret.is_some(),
-                })
-                .collect(),
-        )),
-        Fetch::Forbidden | Fetch::NotFound => Ok(WebhooksState::NoPermission),
+        Fetch::Ok(v) => Ok(v
+            .into_iter()
+            .map(|h| WebhookInfo {
+                url: h.config.url.unwrap_or_default(),
+                has_secret: h.config.secret.is_some(),
+            })
+            .collect()),
+        // Reading webhooks requires the `admin:org_hook` / `admin:repo_hook` scope, which is
+        // narrower than `admin:org` / `repo`. If the token can't see this endpoint, skip the
+        // check rather than failing the whole run.
+        Fetch::Forbidden | Fetch::NotFound => {
+            let _ = (owner, repo);
+            Ok(Vec::new())
+        }
     }
 }
 
-pub fn evaluate_webhooks(state: &WebhooksState) -> CheckOutcome {
-    let hooks = match state {
-        WebhooksState::Ok(v) => v,
-        WebhooksState::NoPermission => return CheckOutcome::skipped("?"),
-    };
-
+pub fn evaluate_webhooks(hooks: &[WebhookInfo]) -> CheckOutcome {
     if hooks.is_empty() {
         return CheckOutcome::pass("—");
     }
@@ -265,7 +304,7 @@ pub(crate) async fn locate_security_md(
             .await?
         {
             Fetch::Ok(_) => return Ok(FilePresence::Present),
-            Fetch::Forbidden => return Ok(FilePresence::Unknown),
+            Fetch::Forbidden => return Err(permission_error("SECURITY.md", org, Some(repo))),
             Fetch::NotFound => {}
         }
     }
@@ -283,7 +322,7 @@ pub(crate) async fn locate_codeowners(
             .await?
         {
             Fetch::Ok(_) => return Ok(FilePresence::Present),
-            Fetch::Forbidden => return Ok(FilePresence::Unknown),
+            Fetch::Forbidden => return Err(permission_error("CODEOWNERS", org, Some(repo))),
             Fetch::NotFound => {}
         }
     }

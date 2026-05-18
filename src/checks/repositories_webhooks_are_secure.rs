@@ -1,23 +1,19 @@
 use crate::checks::StateCtx;
-use crate::checks::common::{WebhookInfo, WebhooksState, evaluate_webhooks, noun, repos_word};
+use crate::checks::common::{WebhookInfo, evaluate_webhooks, noun, repos_word};
 use crate::checks::org_context::OrgContext;
 use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories webhooks are secure";
-pub const HOW_TO_FIX: &str = "https://github.com/{org}/{repo}/settings/hooks > __Edit__ -> Each webhook > Payload URL > __Set__ -> https:// endpoint > Secret > __Set__ -> A secret token > __Click__ -> Update webhook";
+pub const HOW_TO_FIX: &str = "https://github.com/{org}/{repo}/settings/hooks > *Edit* -> Each webhook > Payload URL > *Set* -> https:// endpoint > Secret > *Set* -> A secret token > *Click* -> Update webhook";
 pub const WHY_ENABLE: &str = "Plain-HTTP hooks leak payloads (and any secrets inside them) to any network on the path, and a hook without a shared secret has no way to prove the request actually came from GitHub.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
-    let hooks = match &ctx.webhooks {
-        WebhooksState::Ok(v) => v,
-        WebhooksState::NoPermission => return CheckOutcome::skipped("Unknown"),
-    };
-    if hooks.is_empty() {
+    if ctx.webhooks.is_empty() {
         return CheckOutcome::pass("No organization webhooks configured");
     }
     let mut findings: Vec<String> = Vec::new();
-    for h in hooks {
+    for h in &ctx.webhooks {
         let url = if h.url.is_empty() {
             "<unknown>"
         } else {
@@ -48,41 +44,36 @@ fn count_insecure(hooks: &[WebhookInfo]) -> usize {
         .count()
 }
 
-pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
-    let mut total = 0usize;
+pub fn description(ctx: StateCtx<'_>) -> Option<String> {
+    let total = ctx.repos.len();
     let mut bad_repos = 0usize;
     let mut repo_hook_total = 0usize;
     let mut repo_insecure = 0usize;
     for r in ctx.repos {
-        if let WebhooksState::Ok(v) = &r.webhooks {
-            total += 1;
-            repo_hook_total += v.len();
-            let bad = count_insecure(v);
-            repo_insecure += bad;
-            if bad > 0 {
-                bad_repos += 1;
-            }
+        repo_hook_total += r.webhooks.len();
+        let bad = count_insecure(&r.webhooks);
+        repo_insecure += bad;
+        if bad > 0 {
+            bad_repos += 1;
         }
     }
 
-    let org_summary = ctx.org.and_then(|o| match &o.webhooks {
-        WebhooksState::NoPermission => None,
-        WebhooksState::Ok(v) if v.is_empty() => Some((0usize, 0usize)),
-        WebhooksState::Ok(v) => Some((v.len(), count_insecure(v))),
-    });
+    let org_summary = ctx
+        .org
+        .map(|o| (o.webhooks.len(), count_insecure(&o.webhooks)));
 
-    let org_phrase: Option<String> = org_summary.map(|(total, bad)| {
-        if total == 0 {
+    let org_phrase: Option<String> = org_summary.map(|(t, bad)| {
+        if t == 0 {
             "no organization webhooks are configured".into()
         } else if bad == 0 {
             format!(
-                "all {total} organization {} use HTTPS with a secret",
-                noun(total, "webhook", "webhooks")
+                "all {t} organization {} use HTTPS with a secret",
+                noun(t, "webhook", "webhooks")
             )
         } else {
             format!(
-                "{bad}/{total} organization {} lack HTTPS or a secret",
-                noun(total, "webhook", "webhooks")
+                "{bad}/{t} organization {} lack HTTPS or a secret",
+                noun(t, "webhook", "webhooks")
             )
         }
     });

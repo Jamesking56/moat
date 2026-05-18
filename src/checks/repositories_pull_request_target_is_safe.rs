@@ -2,7 +2,7 @@ use crate::checks::StateCtx;
 use crate::checks::common::{noun, public_repos_word as repos_word};
 use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
-use crate::support::workflows::{self, WorkflowsState};
+use crate::support::workflows;
 
 pub const LABEL: &str = "Repositories pull request target is safe";
 pub const HOW_TO_FIX: &str = "Switch the trigger to `pull_request`, or ensure the workflow does not check out `github.event.pull_request.head.ref` (only check out the base ref).";
@@ -12,36 +12,14 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     if ctx.workflows.is_empty() {
         return CheckOutcome::skipped("—");
     }
-
-    let mut any_loaded = false;
-    let mut any_non_empty = false;
-    let mut all_no_permission = true;
-    for (_, state) in ctx.workflows.iter() {
-        match state {
-            WorkflowsState::Loaded(w) => {
-                all_no_permission = false;
-                any_loaded = true;
-                if !w.is_empty() {
-                    any_non_empty = true;
-                }
-            }
-            WorkflowsState::NoPermission => {}
-        }
-    }
-    if all_no_permission {
-        return CheckOutcome::skipped("?");
-    }
-    if any_loaded && !any_non_empty {
+    if !ctx.workflows.has_any_workflows() {
         return CheckOutcome::skipped("N/a");
     }
 
     let multi = ctx.workflows.len() > 1;
     let mut bad: Vec<String> = Vec::new();
     let mut failing_branches: Vec<String> = Vec::new();
-    for (branch, state) in ctx.workflows.iter() {
-        let WorkflowsState::Loaded(wfs) = state else {
-            continue;
-        };
+    for (branch, wfs) in ctx.workflows.iter() {
         let mut branch_bad: Vec<String> = Vec::new();
         for wf in wfs {
             if workflows::has_pull_request_target(&wf.doc)
@@ -58,16 +36,15 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
         }
     }
 
-    if bad.is_empty() {
-        CheckOutcome::pass("✓")
-    } else {
-        CheckOutcome::fail("✗")
+    if !bad.is_empty() {
+        return CheckOutcome::fail("✗")
             .with_items(bad)
-            .with_failing_branches(failing_branches)
+            .with_failing_branches(failing_branches);
     }
+    CheckOutcome::pass("✓")
 }
 
-pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
+pub fn description(ctx: StateCtx<'_>) -> Option<String> {
     let mut total_bad = 0usize;
     let mut bad_repos = 0usize;
     let mut applicable = 0usize;
@@ -77,10 +54,7 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
         }
         applicable += 1;
         let mut repo_bad = 0usize;
-        for (_, state) in r.workflows.iter() {
-            let WorkflowsState::Loaded(wfs) = state else {
-                continue;
-            };
+        for (_, wfs) in r.workflows.iter() {
             for wf in wfs {
                 if workflows::has_pull_request_target(&wf.doc)
                     && workflows::has_untrusted_checkout(&wf.doc)

@@ -1,17 +1,14 @@
 use crate::checks::StateCtx;
-use crate::checks::common::{FilePresence, repos_word};
-use crate::checks::org_context::{OrgContext, RulesetsState};
+use crate::checks::common::{FilePresence, inspectable_branch_protection_repos, repos_word};
+use crate::checks::org_context::OrgContext;
 use crate::checks::repo_context::{BranchEval, BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories pull requests require reviews";
-pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (__Click__ -> New ruleset -> New branch ruleset or __Edit__ -> Existing one) > Enforcement status > __Select__ -> Active > Target branches > __Add target__ -> {branches} > Branch rules > __Check__ -> Require a pull request before merging > Required approvals > __Set__ -> 1 (or more) > __Check__ -> Dismiss stale pull request approvals when new commits are pushed > __Check__ -> Require approval of the most recent reviewable push > __Check__ -> Require review from Code Owners > __Click__ -> Create/Save changes";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (*Click* -> New ruleset -> New branch ruleset or *Edit* -> Existing one) > Enforcement status > *Select* -> Active > Target branches > *Add target* -> {branches} > Branch rules > *Check* -> Require a pull request before merging > Required approvals > *Set* -> 1 (or more) > *Check* -> Dismiss stale pull request approvals when new commits are pushed > *Check* -> Require approval of the most recent reviewable push > *Check* -> Require review from Code Owners > *Click* -> Create/Save changes";
 pub const WHY_ENABLE: &str = "Without required reviews, a single compromised contributor account can push directly to a release branch — peer review is the cheapest mechanism that catches malicious patches before they ship. Stale-review dismissal and last-push approval close the gap where an attacker amends a previously-approved PR; code-owner review ensures changes to sensitive paths are seen by the right people.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
-    if ctx.rulesets.state == RulesetsState::NoPermission {
-        return CheckOutcome::skipped("?");
-    }
     if !ctx.rulesets.pull_request {
         return CheckOutcome::fail("Not required by any org-level ruleset");
     }
@@ -65,26 +62,19 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
             }
         }
         BranchProtectionState::Unprotected => BranchEval::Fail(Vec::new()),
-        BranchProtectionState::NoPermission => BranchEval::Unknown,
         BranchProtectionState::PlanGated => BranchEval::PlanGated,
     })
 }
 
-pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
-    let org_fully_required = ctx.org.and_then(|o| {
-        if o.rulesets.state == RulesetsState::NoPermission {
-            None
-        } else {
-            Some(
-                o.rulesets.pull_request
-                    && o.rulesets.pr_dismiss_stale_reviews
-                    && o.rulesets.pr_require_last_push_approval
-                    && o.rulesets.pr_require_code_owner_review,
-            )
-        }
+pub fn description(ctx: StateCtx<'_>) -> Option<String> {
+    let org_fully_required = ctx.org.map(|o| {
+        o.rulesets.pull_request
+            && o.rulesets.pr_dismiss_stale_reviews
+            && o.rulesets.pr_require_last_push_approval
+            && o.rulesets.pr_require_code_owner_review
     });
 
-    let total = ctx.repos.len();
+    let total = inspectable_branch_protection_repos(ctx.repos);
     let missing = count_repos_missing_full_pr_reviews(ctx.repos);
 
     Some(match (org_fully_required, missing) {
@@ -139,7 +129,7 @@ fn count_repos_missing_full_pr_reviews(repos: &[&RepoContext]) -> usize {
                         || (codeowners_present && !*pr_require_code_owner_review)
                 }
                 BranchProtectionState::Unprotected => true,
-                BranchProtectionState::NoPermission | BranchProtectionState::PlanGated => false,
+                BranchProtectionState::PlanGated => false,
             };
             if fails {
                 any_fail = true;

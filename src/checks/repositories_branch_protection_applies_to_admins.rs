@@ -1,17 +1,16 @@
 use crate::checks::StateCtx;
-use crate::checks::common::{count_repos_missing_branch_flag, repos_word};
-use crate::checks::org_context::{OrgContext, RulesetsState};
+use crate::checks::common::{
+    count_repos_missing_branch_flag, inspectable_branch_protection_repos, repos_word,
+};
+use crate::checks::org_context::OrgContext;
 use crate::checks::repo_context::{BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories branch protection applies to admins";
-pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (__Click__ -> New ruleset -> New branch ruleset or __Edit__ -> Existing one) > Bypass list > __Remove__ -> Every role/team/user > __Click__ -> Create/Save changes";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (*Click* -> New ruleset -> New branch ruleset or *Edit* -> Existing one) > Bypass list > *Remove* -> Every role/team/user > *Click* -> Create/Save changes";
 pub const WHY_ENABLE: &str = "If admins can bypass the ruleset, a single compromised admin token is enough to push unsigned or unreviewed code straight to a release branch — the rule becomes advisory.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
-    if ctx.rulesets.state == RulesetsState::NoPermission {
-        return CheckOutcome::skipped("?");
-    }
     if !ctx.rulesets.any_active {
         return CheckOutcome::fail("No active org-level rulesets");
     }
@@ -29,22 +28,20 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     })
 }
 
-pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
-    let total = ctx.repos.len();
+pub fn description(ctx: StateCtx<'_>) -> Option<String> {
+    let total = inspectable_branch_protection_repos(ctx.repos);
     let bypass_repos = count_repos_missing_branch_flag(ctx.repos, |s| match s {
         BranchProtectionState::Protected { enforce_admins, .. } => Some(*enforce_admins),
         _ => None,
     });
 
-    let org_state = ctx.org.and_then(|o| {
-        if o.rulesets.state == RulesetsState::NoPermission {
-            None
-        } else if !o.rulesets.any_active {
-            Some("no_rulesets")
+    let org_state = ctx.org.map(|o| {
+        if !o.rulesets.any_active {
+            "no_rulesets"
         } else if o.rulesets.has_bypass_actors {
-            Some("bypass")
+            "bypass"
         } else {
-            Some("clean")
+            "clean"
         }
     });
 

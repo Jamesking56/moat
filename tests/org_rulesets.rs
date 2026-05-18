@@ -1,4 +1,4 @@
-use moat::checks::org_context::{RulesetsState, fetch_org_rulesets};
+use moat::checks::org_context::fetch_org_rulesets;
 use moat::support::github::FakeGitHubClient;
 use serde_json::json;
 
@@ -239,14 +239,19 @@ async fn ignores_inactive_rulesets() {
 
     let r = fetch_org_rulesets(&client, "acme").await.unwrap();
     assert!(!r.any_active);
-    assert_eq!(r.state as u8, RulesetsState::Loaded as u8);
 }
 
 #[tokio::test]
-async fn forbidden_listing_yields_no_permission() {
+async fn forbidden_listing_bails() {
     let client = FakeGitHubClient::new().with_forbidden("/orgs/acme/rulesets");
-    let r = fetch_org_rulesets(&client, "acme").await.unwrap();
-    assert_eq!(r.state as u8, RulesetsState::NoPermission as u8);
+    let err = fetch_org_rulesets(&client, "acme")
+        .await
+        .err()
+        .expect("expected bail on 403");
+    assert!(
+        err.to_string().contains("rulesets"),
+        "unexpected error: {err}"
+    );
 }
 
 #[tokio::test]

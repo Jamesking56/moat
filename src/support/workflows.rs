@@ -1,13 +1,9 @@
+use crate::checks::common::permission_error;
 use crate::support::github::{Fetch, GitHubClient};
 use anyhow::Result;
 use futures::future::try_join_all;
 use serde::Deserialize;
 use serde_yaml::Value;
-
-pub enum WorkflowsState {
-    Loaded(Vec<Workflow>),
-    NoPermission,
-}
 
 pub struct Workflow {
     pub path: String,
@@ -27,13 +23,19 @@ pub async fn fetch_workflows(
     owner: &str,
     repo: &str,
     branch: &str,
-) -> Result<WorkflowsState> {
+) -> Result<Vec<Workflow>> {
     let listing_path = format!("/repos/{owner}/{repo}/contents/.github/workflows?ref={branch}");
     let entries: Vec<ContentEntry> =
         match client.get_json::<Vec<ContentEntry>>(&listing_path).await? {
             Fetch::Ok(v) => v,
-            Fetch::NotFound => return Ok(WorkflowsState::Loaded(Vec::new())),
-            Fetch::Forbidden => return Ok(WorkflowsState::NoPermission),
+            Fetch::NotFound => return Ok(Vec::new()),
+            Fetch::Forbidden => {
+                return Err(permission_error(
+                    &format!(".github/workflows on `{branch}`"),
+                    owner,
+                    Some(repo),
+                ));
+            }
         };
 
     let candidates: Vec<ContentEntry> = entries
@@ -57,7 +59,14 @@ pub async fn fetch_workflows(
     for (entry, raw) in candidates.into_iter().zip(raws) {
         let raw = match raw {
             Fetch::Ok(s) => s,
-            Fetch::NotFound | Fetch::Forbidden => continue,
+            Fetch::NotFound => continue,
+            Fetch::Forbidden => {
+                return Err(permission_error(
+                    &format!("workflow file `{}`", entry.path),
+                    owner,
+                    Some(repo),
+                ));
+            }
         };
         let doc = match serde_yaml::from_str::<Value>(&raw) {
             Ok(v) => v,
@@ -68,12 +77,12 @@ pub async fn fetch_workflows(
             doc,
         });
     }
-    Ok(WorkflowsState::Loaded(out))
+    Ok(out)
 }
 
 #[derive(Default)]
 pub struct BranchedWorkflows {
-    pub per_branch: Vec<(String, WorkflowsState)>,
+    pub per_branch: Vec<(String, Vec<Workflow>)>,
 }
 
 impl BranchedWorkflows {
@@ -83,7 +92,7 @@ impl BranchedWorkflows {
         }
     }
 
-    pub fn iter(&self) -> std::slice::Iter<'_, (String, WorkflowsState)> {
+    pub fn iter(&self) -> std::slice::Iter<'_, (String, Vec<Workflow>)> {
         self.per_branch.iter()
     }
 
@@ -95,30 +104,15 @@ impl BranchedWorkflows {
         self.per_branch.len()
     }
 
-    /// True if at least one branch has a loaded, non-empty set of workflows.
     pub fn has_any_workflows(&self) -> bool {
-        self.per_branch
-            .iter()
-            .any(|(_, s)| matches!(s, WorkflowsState::Loaded(w) if !w.is_empty()))
+        self.per_branch.iter().any(|(_, w)| !w.is_empty())
     }
 
-    /// True if every loaded branch reported zero workflow files (e.g. no
-    /// `.github/workflows` directory anywhere). Branches that are NoPermission
-    /// are ignored. Returns false if there are no branches tracked at all.
     pub fn all_branches_empty(&self) -> bool {
         if self.per_branch.is_empty() {
             return false;
         }
-        let mut any_loaded = false;
-        for (_, s) in &self.per_branch {
-            if let WorkflowsState::Loaded(w) = s {
-                any_loaded = true;
-                if !w.is_empty() {
-                    return false;
-                }
-            }
-        }
-        any_loaded
+        self.per_branch.iter().all(|(_, w)| w.is_empty())
     }
 }
 

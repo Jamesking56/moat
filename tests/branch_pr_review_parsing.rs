@@ -1,4 +1,6 @@
-use moat::checks::repo_context::{BranchProtectionState, RepoContext, RepoListing};
+use moat::checks::repo_context::{
+    BranchProtectionState, FeatureStatus, RepoContext, RepoListing, SecurityAndAnalysis,
+};
 use moat::support::github::FakeGitHubClient;
 use serde_json::json;
 
@@ -9,15 +11,50 @@ fn listing() -> RepoListing {
         fork: false,
         private: false,
         default_branch: Some("main".into()),
-        security_and_analysis: None,
+        security_and_analysis: Some(SecurityAndAnalysis {
+            secret_scanning: Some(FeatureStatus {
+                status: "enabled".into(),
+            }),
+            secret_scanning_push_protection: Some(FeatureStatus {
+                status: "enabled".into(),
+            }),
+        }),
         permissions: None,
     }
 }
 
+/// Seeds every endpoint `RepoContext::fetch` calls so the test can focus on
+/// branch-protection parsing without spurious bail-outs from elsewhere.
 fn base_client() -> FakeGitHubClient {
     FakeGitHubClient::new()
-        .with_paginated("/repos/acme/demo/branches", vec![json!({ "name": "main" })])
         .with_status("/repos/acme/demo/contents/.moat.yml", 404)
+        .with_json(
+            "/repos/acme/demo/actions/permissions/workflow",
+            json!({ "default_workflow_permissions": "read" }),
+        )
+        .with_status("/repos/acme/demo/vulnerability-alerts", 204)
+        .with_json(
+            "/repos/acme/demo/automated-security-fixes",
+            json!({ "enabled": true, "paused": false }),
+        )
+        .with_json(
+            "/repos/acme/demo/private-vulnerability-reporting",
+            json!({ "enabled": true }),
+        )
+        .with_json(
+            "/repos/acme/demo/immutable-releases",
+            json!({ "enabled": true }),
+        )
+        .with_json(
+            "/repos/acme/demo/actions/permissions/fork-pr-contributor-approval",
+            json!({ "approval_policy": "all_external_contributors" }),
+        )
+        .with_json(
+            "/repos/acme/demo/actions/permissions",
+            json!({ "sha_pinning_required": true }),
+        )
+        .with_paginated("/repos/acme/demo/hooks", vec![])
+        .with_paginated("/repos/acme/demo/collaborators?affiliation=direct", vec![])
 }
 
 fn pr_review_sub_flags(state: &BranchProtectionState) -> (bool, bool, bool, bool) {
