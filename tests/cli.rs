@@ -40,7 +40,7 @@ fn audit_without_token_fails_with_helpful_message() {
         .args(["octocat"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("gh").or(predicate::str::contains("GITHUB_TOKEN")));
+        .stdout(predicate::str::contains("gh").or(predicate::str::contains("GITHUB_TOKEN")));
 }
 
 #[test]
@@ -70,7 +70,7 @@ fn format_accepts_known_values() {
             .args(["octocat", "--format", v])
             .assert()
             .failure()
-            .stderr(predicate::str::contains("gh").or(predicate::str::contains("GITHUB_TOKEN")));
+            .stdout(predicate::str::contains("gh").or(predicate::str::contains("GITHUB_TOKEN")));
     }
 }
 
@@ -80,7 +80,7 @@ fn format_rejects_unknown_value() {
         .args(["octocat", "--format", "yaml"])
         .assert()
         .failure()
-        .stderr(
+        .stdout(
             predicate::str::contains("invalid value")
                 .or(predicate::str::contains("possible values")),
         );

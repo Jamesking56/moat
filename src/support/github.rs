@@ -7,12 +7,38 @@ const USER_AGENT: &str = concat!("moat/", env!("CARGO_PKG_VERSION"));
 pub const DEFAULT_API: &str = "https://api.github.com";
 const API_BASE_ENV: &str = "MOAT_GITHUB_API_BASE";
 
-pub fn resolve_token() -> Result<String> {
-    for var in ["GITHUB_TOKEN", "GH_TOKEN"] {
+/// Where the GitHub token came from. Drives the remediation copy moat shows
+/// when the token turns out to be under-scoped, SAML-blocked, or rejected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthSource {
+    /// `GITHUB_TOKEN` environment variable.
+    GithubTokenEnv,
+    /// `GH_TOKEN` environment variable.
+    GhTokenEnv,
+    /// Output of `gh auth token`.
+    GhCli,
+}
+
+impl std::fmt::Display for AuthSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            AuthSource::GithubTokenEnv => "GITHUB_TOKEN",
+            AuthSource::GhTokenEnv => "GH_TOKEN",
+            AuthSource::GhCli => "gh auth token",
+        };
+        f.write_str(s)
+    }
+}
+
+pub fn resolve_token() -> Result<(String, AuthSource)> {
+    for (var, src) in [
+        ("GITHUB_TOKEN", AuthSource::GithubTokenEnv),
+        ("GH_TOKEN", AuthSource::GhTokenEnv),
+    ] {
         if let Ok(v) = std::env::var(var)
             && !v.trim().is_empty()
         {
-            return Ok(v);
+            return Ok((v, src));
         }
     }
 
@@ -34,7 +60,32 @@ pub fn resolve_token() -> Result<String> {
             "`gh auth token` returned empty output; run `gh auth login` first"
         ));
     }
-    Ok(token)
+    Ok((token, AuthSource::GhCli))
+}
+
+/// Result of probing `GET /user` at startup. See [`HttpGitHubClient::preflight`].
+#[derive(Debug, Clone)]
+pub struct Preflight {
+    /// Granted OAuth scopes for classic PATs / gh OAuth tokens. `None` when the
+    /// token type doesn't expose scopes (fine-grained PATs, GitHub App tokens).
+    pub scopes: Option<Vec<String>>,
+    /// If the org under audit requires SAML SSO and the token isn't authorized
+    /// for it, this carries the authorization URL GitHub returned.
+    pub sso_url: Option<String>,
+    /// True when GitHub returned 401 Unauthorized for `GET /user`. The runner
+    /// formats a source-aware error so the user knows which token was rejected.
+    pub rejected: bool,
+}
+
+fn sso_url_from(headers: &header::HeaderMap) -> Option<String> {
+    let raw = headers.get("x-github-sso")?.to_str().ok()?;
+    for part in raw.split(';') {
+        let part = part.trim();
+        if let Some(rest) = part.strip_prefix("url=") {
+            return Some(rest.to_string());
+        }
+    }
+    None
 }
 
 #[derive(Debug)]
@@ -64,6 +115,7 @@ pub trait GitHubClient {
         &self,
         path: &str,
     ) -> Result<Fetch403<Vec<T>>>;
+    async fn preflight(&self) -> Result<Preflight>;
 }
 
 pub type Client = HttpGitHubClient;
@@ -112,6 +164,61 @@ impl HttpGitHubClient {
             path.to_string()
         } else {
             format!("{}{}", self.base_url, path)
+        }
+    }
+
+    /// Probe `GET /user` to discover what kind of token we have and (for OAuth
+    /// tokens) which scopes it carries. Used by the runner to fail fast with a
+    /// clear message before any check fires a 403 mid-run.
+    ///
+    /// Behaviour:
+    /// - 200 with `X-OAuth-Scopes` header → classic PAT / gh OAuth token; the
+    ///   scopes list is returned so the caller can diff against requirements.
+    /// - 200 without the scope header → fine-grained PAT or GitHub App token;
+    ///   scopes is `None` and the caller should skip scope validation (these
+    ///   use granular permissions instead).
+    /// - 401 → token rejected outright; surface a clear auth error.
+    /// - 403 with SAML SSO hint → token isn't authorized for the org; surface
+    ///   the authorization URL GitHub returns.
+    pub async fn preflight(&self) -> Result<Preflight> {
+        let url = self.url("/user");
+        let resp = self.http.get(&url).send().await?;
+        let status = resp.status();
+        let sso_url = sso_url_from(resp.headers());
+        let scopes_header = resp
+            .headers()
+            .get("x-oauth-scopes")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        match status {
+            StatusCode::OK => {
+                let scopes = scopes_header.map(|s| {
+                    s.split(',')
+                        .map(|t| t.trim().to_string())
+                        .filter(|t| !t.is_empty())
+                        .collect::<Vec<_>>()
+                });
+                Ok(Preflight {
+                    scopes,
+                    sso_url: None,
+                    rejected: false,
+                })
+            }
+            StatusCode::UNAUTHORIZED => Ok(Preflight {
+                scopes: None,
+                sso_url: None,
+                rejected: true,
+            }),
+            StatusCode::FORBIDDEN if sso_url.is_some() => Ok(Preflight {
+                scopes: None,
+                sso_url,
+                rejected: false,
+            }),
+            s => {
+                let body = resp.text().await.unwrap_or_default();
+                Err(anyhow!("GET {url} -> {s}: {body}"))
+            }
         }
     }
 
@@ -303,6 +410,9 @@ impl GitHubClient for HttpGitHubClient {
         path: &str,
     ) -> Result<Fetch403<Vec<T>>> {
         HttpGitHubClient::get_paginated_plan_aware(self, path).await
+    }
+    async fn preflight(&self) -> Result<Preflight> {
+        HttpGitHubClient::preflight(self).await
     }
 }
 
@@ -507,5 +617,15 @@ impl GitHubClient for FakeGitHubClient {
             out.push(serde_json::from_value(v)?);
         }
         Ok(Fetch403::Ok(out))
+    }
+
+    async fn preflight(&self) -> Result<Preflight> {
+        // Tests don't exercise the scope gate; default to a fine-grained-style
+        // token (no scopes header) so the runner skips validation.
+        Ok(Preflight {
+            scopes: None,
+            sso_url: None,
+            rejected: false,
+        })
     }
 }

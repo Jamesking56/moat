@@ -31,6 +31,7 @@ serde_yaml = "0.9"
 toml = "1.1"
 terminal_size = "0.4"
 terminal-light = "1"
+self_update = { version = "0.44", default-features = false, features = ["reqwest", "rustls", "archive-tar", "archive-zip", "compression-flate2", "compression-zip-deflate"] }
 
 [dev-dependencies]
 wiremock = "0.6"

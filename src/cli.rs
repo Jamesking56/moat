@@ -4,14 +4,29 @@ use clap::{Parser, ValueEnum};
 #[command(
     name = "moat",
     version,
-    about = "Supply-chain hygiene for your GitHub organization & repositories"
+    about = "Supply-chain hygiene for your GitHub organization & repositories",
+    disable_help_flag = true,
+    disable_version_flag = true
 )]
 pub struct Cli {
-    pub account: String,
+    #[arg(required_unless_present_any = ["self_update", "help", "version"])]
+    pub account: Option<String>,
+
+    /// Print help.
+    #[arg(short = 'h', long, action = clap::ArgAction::SetTrue)]
+    pub help: bool,
+
+    /// Print version.
+    #[arg(short = 'V', long, action = clap::ArgAction::SetTrue)]
+    pub version: bool,
 
     /// Display all collaborators and members instead of truncating the list.
     #[arg(short, long)]
     pub verbose: bool,
+
+    /// Download and install the latest released version of moat, then exit.
+    #[arg(long)]
+    pub self_update: bool,
 
     /// Color theme. `auto` detects the terminal background via COLORFGBG.
     #[arg(long, value_enum, default_value_t = Theme::Auto)]

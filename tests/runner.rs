@@ -1,6 +1,9 @@
 use moat::checks::CHECKS;
-use moat::runner::{self, AccountKind, CheckResult};
-use moat::support::github::FakeGitHubClient;
+use moat::runner::{
+    self, AccountKind, CheckResult, format_missing_scopes_error, format_sso_error,
+    format_unauthorized_error,
+};
+use moat::support::github::{AuthSource, FakeGitHubClient};
 use moat::support::outcome::Status;
 use serde_json::json;
 
@@ -205,6 +208,81 @@ async fn missing_moat_toml_continues_with_defaults() {
         .await
         .unwrap();
     assert_eq!(contexts.len(), 1);
+}
+
+#[test]
+fn missing_scopes_error_labels_github_token_source() {
+    // GITHUB_TOKEN remediation steers the user to regenerate the PAT or unset
+    // the env var to fall back to gh — the message must name the env var so the
+    // user knows what to regenerate.
+    let granted = vec!["repo".to_string(), "read:org".to_string()];
+    let required = ["admin:org", "repo", "workflow"];
+    let missing = ["admin:org", "workflow"];
+    let err =
+        format_missing_scopes_error(AuthSource::GithubTokenEnv, &granted, &required, &missing);
+    let s = err.to_string();
+    assert!(s.contains("GITHUB_TOKEN"));
+    assert!(s.contains("admin:org"));
+    assert!(s.contains("https://github.com/settings/tokens"));
+    assert!(s.contains("unset GITHUB_TOKEN"));
+    assert!(!s.contains("gh auth login -s"));
+}
+
+#[test]
+fn missing_scopes_error_labels_gh_token_source() {
+    let granted = vec!["repo".to_string()];
+    let required = ["repo", "workflow"];
+    let missing = ["workflow"];
+    let err = format_missing_scopes_error(AuthSource::GhTokenEnv, &granted, &required, &missing);
+    let s = err.to_string();
+    assert!(s.contains("GH_TOKEN"));
+    assert!(s.contains("unset GH_TOKEN"));
+    assert!(s.contains("export GH_TOKEN=<new-token>"));
+}
+
+#[test]
+fn missing_scopes_error_labels_gh_cli_source() {
+    // gh CLI source should recommend `gh auth login -s ...` with the joined
+    // required scope list, not the PAT regeneration flow.
+    let granted = vec!["repo".to_string()];
+    let required = ["admin:org", "repo", "workflow"];
+    let missing = ["admin:org", "workflow"];
+    let err = format_missing_scopes_error(AuthSource::GhCli, &granted, &required, &missing);
+    let s = err.to_string();
+    assert!(s.contains("gh auth token"));
+    assert!(s.contains("gh auth login -s admin:org,repo,workflow -h github.com -w"));
+    assert!(!s.contains("settings/tokens"));
+}
+
+#[test]
+fn sso_error_names_source_and_account() {
+    for src in [
+        AuthSource::GithubTokenEnv,
+        AuthSource::GhTokenEnv,
+        AuthSource::GhCli,
+    ] {
+        let err = format_sso_error(src, "acme", "https://github.com/orgs/acme/sso?return_to=/x");
+        let s = err.to_string();
+        assert!(s.contains(&format!("{src}")));
+        assert!(s.contains("acme"));
+        assert!(s.contains("sso?return_to=/x"));
+    }
+}
+
+#[test]
+fn unauthorized_error_labels_source() {
+    let s = format_unauthorized_error(AuthSource::GithubTokenEnv).to_string();
+    assert!(s.contains("GITHUB_TOKEN"));
+    assert!(s.contains("401 Unauthorized"));
+    assert!(s.contains("https://github.com/settings/tokens"));
+    assert!(s.contains("classic personal access token"));
+    assert!(s.contains("admin:org, repo, workflow"));
+    assert!(s.contains("fine-grained PATs are not supported"));
+    assert!(s.contains("unset GITHUB_TOKEN"));
+
+    let s = format_unauthorized_error(AuthSource::GhCli).to_string();
+    assert!(s.contains("gh auth token"));
+    assert!(s.contains("gh auth login -s admin:org,repo,workflow -h github.com -w"));
 }
 
 #[tokio::test]

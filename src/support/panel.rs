@@ -21,6 +21,7 @@ pub fn width() -> usize {
 struct ProgressState {
     badge: String,
     brand: String,
+    brand_note: Option<String>,
     left: String,
     tty: bool,
     done: AtomicUsize,
@@ -71,19 +72,29 @@ pub fn finish_progress(final_right: &str) {
 
 fn rewrite_header_right(s: &ProgressState, right: &str) {
     let inner = width() - 2;
+    let note_visible = s
+        .brand_note
+        .as_ref()
+        .map(|n| 1 + n.chars().count())
+        .unwrap_or(0);
     let used = 2
         + s.badge.chars().count()
         + 1
         + s.brand.chars().count()
+        + note_visible
         + 3
         + s.left.chars().count()
         + right.chars().count()
         + 2;
     let pad = inner.saturating_sub(used);
+    let brand_rendered = match &s.brand_note {
+        Some(note) => format!("{} {}", text_bold(&s.brand), warning(note)),
+        None => text_bold(&s.brand),
+    };
     let row = format!(
         "  {} {} {} {}{}{}  ",
         accent_bold(&s.badge),
-        text_bold(&s.brand),
+        brand_rendered,
         muted("·"),
         text_bold(&s.left),
         " ".repeat(pad),
@@ -337,13 +348,19 @@ pub fn top_titled(title: &str, badge: &str) {
 }
 
 pub fn top_section(label: &str) {
+    top_section_styled(label, text_bold);
+}
+
+/// Same as [`top_section`] but lets the caller style the title (e.g. with
+/// [`danger_bold`] for an authentication error panel).
+pub fn top_section_styled(label: &str, style: impl FnOnce(&str) -> String) {
     let prefix_visible = format!("╭─ {} ", label);
     let used = prefix_visible.chars().count();
     let dashes = width().saturating_sub(used + 1);
     println!(
         "{}{}{}",
         border("╭─ "),
-        text_bold(label),
+        style(label),
         border(&format!(" {}╮", "─".repeat(dashes))),
     );
 }
@@ -384,23 +401,29 @@ pub fn divider() {
     );
 }
 
-pub fn header_panel(badge: &str, brand: &str, left: &str, right: &str) {
+pub fn header_panel(badge: &str, brand: &str, brand_note: Option<&str>, left: &str, right: &str) {
     println!();
     println!("{}", border(&format!("╭{}╮", "─".repeat(width() - 2))));
     let inner = width() - 2;
+    let note_visible = brand_note.map(|n| 1 + n.chars().count()).unwrap_or(0);
     let used = 2
         + badge.chars().count()
         + 1
         + brand.chars().count()
+        + note_visible
         + 3
         + left.chars().count()
         + right.chars().count()
         + 2;
     let pad = inner.saturating_sub(used);
+    let brand_rendered = match brand_note {
+        Some(note) => format!("{} {}", text_bold(brand), warning(note)),
+        None => text_bold(brand),
+    };
     let rendered = format!(
         "  {} {} {} {}{}{}  ",
         accent_bold(badge),
-        text_bold(brand),
+        brand_rendered,
         muted("·"),
         text_bold(left),
         " ".repeat(pad),
@@ -414,6 +437,7 @@ pub fn header_panel(badge: &str, brand: &str, left: &str, right: &str) {
     *state = Some(ProgressState {
         badge: badge.into(),
         brand: brand.into(),
+        brand_note: brand_note.map(|s| s.to_string()),
         left: left.into(),
         tty: std::io::stdout().is_terminal(),
         done: AtomicUsize::new(0),

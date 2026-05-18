@@ -46,7 +46,7 @@ pub fn permission_error(resource: &str, owner: &str, repo: Option<&str>) -> anyh
         None => owner.to_string(),
     };
     anyhow!(
-        "missing permission to read {resource} for `{target}` — check that your token has the required scopes (`admin:org`, `repo`, `read:user`, `workflow`) and that the account is an organization admin",
+        "missing permission to read {resource} for `{target}` — check that your token has the required scopes (`admin:org`, `repo`, `workflow`) and that the account is an organization admin",
     )
 }
 

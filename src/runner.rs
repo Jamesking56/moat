@@ -2,7 +2,7 @@ use crate::checks::org_context::OrgContext;
 use crate::checks::repo_context::{RepoContext, RepoListing};
 use crate::checks::{CHECKS, Check, Scope};
 use crate::config::InvalidConfigError;
-use crate::support::github::{Fetch, GitHubClient};
+use crate::support::github::{AuthSource, Fetch, GitHubClient, Preflight};
 use crate::support::outcome::Status;
 use crate::support::panel;
 use anyhow::{Result, anyhow, bail};
@@ -24,17 +24,19 @@ struct AccountType {
     kind: String,
 }
 
-pub fn print_repo_header(owner: &str, repo: &str) {
+pub fn print_repo_header(owner: &str, repo: &str, outdated_note: Option<&str>) {
     let left = format!("{owner}/{repo}");
-    panel::header_panel("◈", "moat", &left, "Repository");
+    let brand = format!("moat v{}", env!("CARGO_PKG_VERSION"));
+    panel::header_panel("◈", &brand, outdated_note, &left, "Repository");
 }
 
-pub fn print_header(account: &str, kind: AccountKind) {
+pub fn print_header(account: &str, kind: AccountKind, outdated_note: Option<&str>) {
     let kind_long = match kind {
         AccountKind::Organization => "Organization",
         AccountKind::User => "User",
     };
-    panel::header_panel("◈", "moat", account, kind_long);
+    let brand = format!("moat v{}", env!("CARGO_PKG_VERSION"));
+    panel::header_panel("◈", &brand, outdated_note, account, kind_long);
 }
 
 #[derive(Deserialize)]
@@ -115,6 +117,484 @@ pub async fn ensure_viewer_can_audit_repo(
         );
     }
     Ok(listing)
+}
+
+/// What kind of target the user is auditing — different targets need different
+/// OAuth scopes. Org audits exercise org-policy endpoints that fine-grained
+/// repo scopes don't cover; user/repo audits don't.
+#[derive(Clone, Copy)]
+pub enum AuditTarget {
+    Organization,
+    UserOrRepo,
+}
+
+/// OAuth scopes the runner needs for a given target. Kept narrow on purpose —
+/// each entry corresponds to a real endpoint moat hits, so additions need a
+/// matching check to justify them.
+fn required_scopes(target: AuditTarget) -> &'static [&'static str] {
+    match target {
+        // `admin:org` gates `/orgs/{org}/actions/permissions/*` (fork-PR
+        // contributor approval, workflow token permissions) and other
+        // org-policy reads, and umbrellas `read:org` which covers member /
+        // outside-collaborator listings. `repo` lets us see private repos
+        // and their branch protection. `workflow` lets us read workflow files.
+        AuditTarget::Organization => &["admin:org", "repo", "workflow"],
+        AuditTarget::UserOrRepo => &["repo", "workflow"],
+    }
+}
+
+/// A granted scope satisfies a required scope when it's equal, or when it's a
+/// broader umbrella (e.g. `admin:org` covers `read:org`, `repo` covers
+/// `public_repo`). GitHub's scope hierarchy is small enough to enumerate.
+fn scope_satisfies(granted: &str, required: &str) -> bool {
+    if granted == required {
+        return true;
+    }
+    match required {
+        "read:org" => matches!(granted, "admin:org" | "write:org"),
+        "public_repo" => granted == "repo",
+        _ => false,
+    }
+}
+
+/// Earliest auth check. Runs before any account lookup so a rejected token
+/// surfaces as a formatted [`AuthError`] panel rather than a raw 401 dump from
+/// whatever endpoint happened to fire first. Returns the preflight result so
+/// the later scope check doesn't have to re-hit `/user`.
+pub async fn verify_token_credentials(
+    client: &impl GitHubClient,
+    source: AuthSource,
+) -> Result<Preflight> {
+    let preflight: Preflight = client.preflight().await?;
+    if preflight.rejected {
+        return Err(format_unauthorized_error(source).into_anyhow());
+    }
+    Ok(preflight)
+}
+
+/// Pre-flight scope check. Runs after `ensure_viewer_can_audit_account` so the
+/// caller is already known to be an admin — the only thing left that can 403
+/// mid-run is a token whose scopes don't cover the endpoints moat hits.
+pub async fn verify_token_for_target(
+    target: AuditTarget,
+    account: &str,
+    source: AuthSource,
+    preflight: Preflight,
+) -> Result<()> {
+    if preflight.rejected {
+        return Err(format_unauthorized_error(source).into_anyhow());
+    }
+
+    if let Some(url) = preflight.sso_url {
+        return Err(format_sso_error(source, account, &url).into_anyhow());
+    }
+
+    let Some(scopes) = preflight.scopes else {
+        // Fine-grained PAT or GitHub App token — no OAuth scopes to validate.
+        // These use granular permissions; we can't pre-check them, so we let
+        // the run proceed and rely on per-endpoint behaviour.
+        return Ok(());
+    };
+
+    let required = required_scopes(target);
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|req| !scopes.iter().any(|g| scope_satisfies(g, req)))
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    Err(format_missing_scopes_error(source, &scopes, required, &missing).into_anyhow())
+}
+
+/// A categorised authentication error. Carries enough structured info that the
+/// CLI can render a multi-line panel with the same look as the rest of moat's
+/// output, while still falling back to a readable plain-text `Display` for
+/// non-pretty contexts (machine-readable formats, `cargo test`, etc.).
+#[derive(Debug, Clone)]
+pub struct AuthError {
+    pub title: String,
+    pub lines: Vec<AuthErrorLine>,
+}
+
+/// One row inside an [`AuthError`] body. Lets the renderer pick a colour /
+/// indent for each line while keeping the text usable in `Display`.
+#[derive(Debug, Clone)]
+pub enum AuthErrorLine {
+    Blank,
+    /// Regular prose, wrapped to the panel width.
+    Text(String),
+    /// Bolded section label (e.g. `Currently granted:` / `How to fix:`).
+    Bold(String),
+    /// Monospaced action — shown indented in info colour (commands, URLs).
+    Code(String),
+    /// Quieter aside (e.g. parenthetical hints).
+    Muted(String),
+    /// Quieter aside aligned under a numbered step's body (5-space indent),
+    /// for follow-up notes that belong to the step above (e.g. a `gh auth
+    /// login` command's revoke instructions).
+    MutedIndented(String),
+    /// A numbered step. The number is rendered muted (like check rows) so the
+    /// reader's eye lands on the action text, not the list bookkeeping.
+    Numbered(u32, String),
+}
+
+impl AuthError {
+    /// Render the error as a panel matching the main report's visual style.
+    pub fn render(&self) {
+        let inner = panel::width() - 2;
+        let text_width = inner.saturating_sub(6);
+
+        println!();
+        panel::top_section_styled(&self.title, panel::danger_bold);
+        panel::blank();
+
+        for line in &self.lines {
+            match line {
+                AuthErrorLine::Blank => panel::blank(),
+                AuthErrorLine::Text(s) => {
+                    for wrapped in panel::wrap(s, text_width) {
+                        let l = panel::Line::new().space(3).styled(&wrapped, panel::text);
+                        panel::row(l);
+                    }
+                }
+                AuthErrorLine::Bold(s) => {
+                    let l = panel::Line::new().space(3).styled(s, panel::text_bold);
+                    panel::row(l);
+                }
+                AuthErrorLine::Code(s) => {
+                    let l = panel::Line::new().space(6).styled(s, panel::info);
+                    panel::row(l);
+                }
+                AuthErrorLine::Muted(s) => {
+                    for wrapped in panel::wrap(s, text_width) {
+                        let l = panel::Line::new().space(3).styled(&wrapped, panel::muted);
+                        panel::row(l);
+                    }
+                }
+                AuthErrorLine::MutedIndented(s) => {
+                    let inner = text_width.saturating_sub(3);
+                    for wrapped in panel::wrap(s, inner) {
+                        let l = panel::Line::new().space(6).styled(&wrapped, panel::muted);
+                        panel::row(l);
+                    }
+                }
+                AuthErrorLine::Numbered(n, s) => {
+                    let prefix = format!("{n}.");
+                    let inner = text_width.saturating_sub(prefix.len() + 1);
+                    let wrapped = panel::wrap(s, inner);
+                    if let Some(first) = wrapped.first() {
+                        let l = panel::Line::new()
+                            .space(3)
+                            .styled(&prefix, panel::muted)
+                            .plain(" ")
+                            .styled(first, panel::text);
+                        panel::row(l);
+                    }
+                    for cont in wrapped.iter().skip(1) {
+                        let l = panel::Line::new()
+                            .space(3 + prefix.len() + 1)
+                            .styled(cont, panel::text);
+                        panel::row(l);
+                    }
+                }
+            }
+        }
+
+        panel::blank();
+        panel::bottom();
+        println!();
+    }
+
+    fn into_anyhow(self) -> anyhow::Error {
+        anyhow::Error::new(self)
+    }
+}
+
+/// Render an arbitrary error message inside the same panel UI used for auth
+/// errors, so every fatal error the CLI prints looks consistent.
+pub fn render_generic_error(message: &str) {
+    AuthError {
+        title: "Error".to_string(),
+        lines: vec![AuthErrorLine::Text(message.to_string())],
+    }
+    .render();
+}
+
+/// Render an informational message inside a panel that matches the audit
+/// report's visual style. Used for non-audit output (version, help,
+/// self-update notices) so every screen the CLI paints looks consistent.
+pub fn render_info_panel(title: &str, body_lines: &[String]) {
+    let inner = panel::width() - 2;
+    let text_width = inner.saturating_sub(6);
+
+    println!();
+    panel::top_section_styled(title, panel::accent_bold);
+    panel::blank();
+    for line in body_lines {
+        if line.is_empty() {
+            panel::blank();
+            continue;
+        }
+        for wrapped in panel::wrap(line, text_width) {
+            let l = panel::Line::new().space(3).styled(&wrapped, panel::text);
+            panel::row(l);
+        }
+    }
+    panel::blank();
+    panel::bottom();
+    println!();
+}
+
+/// Render pre-formatted text (e.g. clap's help output) inside an info panel.
+/// Each line is printed inside the panel borders; lines that exceed the
+/// available width are soft-wrapped with the original leading indent
+/// preserved so that the formatting (Usage:, Options:, …) stays readable.
+pub fn render_raw_panel(title: &str, body: &str) {
+    let inner = panel::width() - 2;
+    let max_line = inner.saturating_sub(6);
+
+    println!();
+    panel::top_section_styled(title, panel::accent_bold);
+    panel::blank();
+    for raw in body.lines() {
+        if raw.trim().is_empty() {
+            panel::blank();
+            continue;
+        }
+        let indent: String = raw.chars().take_while(|c| *c == ' ').collect();
+        let indent_len = indent.chars().count();
+        let body_width = max_line.saturating_sub(indent_len).max(20);
+        let content: Vec<char> = raw[indent_len..].chars().collect();
+        let mut start = 0;
+        while start < content.len() {
+            let remaining = content.len() - start;
+            if remaining <= body_width {
+                let line: String = content[start..].iter().collect();
+                let full = format!("{indent}{line}");
+                let l = panel::Line::new().space(3).styled(&full, panel::text);
+                panel::row(l);
+                break;
+            }
+            let window_end = start + body_width;
+            let break_at = content[start..window_end]
+                .iter()
+                .rposition(|c| *c == ' ')
+                .map(|p| start + p)
+                .unwrap_or(window_end);
+            let line: String = content[start..break_at].iter().collect();
+            let full = format!("{indent}{line}");
+            let l = panel::Line::new().space(3).styled(&full, panel::text);
+            panel::row(l);
+            start = if break_at < content.len() && content[break_at] == ' ' {
+                break_at + 1
+            } else {
+                break_at
+            };
+        }
+    }
+    panel::blank();
+    panel::bottom();
+    println!();
+}
+
+impl std::fmt::Display for AuthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}", self.title)?;
+        for line in &self.lines {
+            match line {
+                AuthErrorLine::Blank => writeln!(f)?,
+                AuthErrorLine::Text(s)
+                | AuthErrorLine::Bold(s)
+                | AuthErrorLine::Muted(s)
+                | AuthErrorLine::MutedIndented(s) => writeln!(f, "{s}")?,
+                AuthErrorLine::Code(s) => writeln!(f, "    {s}")?,
+                AuthErrorLine::Numbered(n, s) => writeln!(f, "{n}. {s}")?,
+            }
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for AuthError {}
+
+fn fmt_scope_list(scopes: &[String]) -> String {
+    if scopes.is_empty() {
+        "(none)".to_string()
+    } else {
+        scopes.join(", ")
+    }
+}
+
+/// Build a source-aware "missing scopes" error. Pure function so it's
+/// straightforward to unit-test without mocking a GitHub client.
+pub fn format_missing_scopes_error(
+    source: AuthSource,
+    granted: &[String],
+    required: &[&str],
+    missing: &[&str],
+) -> AuthError {
+    let granted_str = fmt_scope_list(granted);
+    let required_str = required.join(", ");
+    let missing_str = missing.join(", ");
+    let required_joined = required.join(",");
+
+    let mut lines = vec![
+        AuthErrorLine::Text(format!(
+            "Your token (from {source}) is missing required scope(s): {missing_str}"
+        )),
+        AuthErrorLine::Blank,
+        AuthErrorLine::Text(format!("Currently granted: {granted_str}")),
+        AuthErrorLine::Text(format!("Required:          {required_str}")),
+        AuthErrorLine::Blank,
+    ];
+
+    match source {
+        AuthSource::GhCli => {
+            lines.push(AuthErrorLine::Bold("How to fix:".to_string()));
+            lines.push(AuthErrorLine::Text("Run:".to_string()));
+            lines.push(AuthErrorLine::Code(format!(
+                "gh auth login -s {required_joined} -h github.com -w"
+            )));
+            lines.push(AuthErrorLine::MutedIndented(
+                "Revoke it later: run `gh auth logout` + revoke GitHub CLI from https://github.com/settings/applications".to_string(),
+            ));
+            lines.push(AuthErrorLine::Blank);
+            lines.push(AuthErrorLine::Muted("Then re-run moat.".to_string()));
+        }
+        AuthSource::GithubTokenEnv | AuthSource::GhTokenEnv => {
+            lines.push(AuthErrorLine::Bold("How to fix:".to_string()));
+            lines.push(AuthErrorLine::Numbered(
+                1,
+                "Regenerate the PAT with all required scopes ticked at:".to_string(),
+            ));
+            lines.push(AuthErrorLine::Code(
+                "https://github.com/settings/tokens".to_string(),
+            ));
+            lines.push(AuthErrorLine::Text(format!(
+                "   Then: export {source}=<new-token>"
+            )));
+            lines.push(AuthErrorLine::Blank);
+            lines.push(AuthErrorLine::Numbered(
+                2,
+                "Or, if you have the gh CLI logged in with the right scopes:".to_string(),
+            ));
+            lines.push(AuthErrorLine::Code(format!("unset {source}")));
+            lines.push(AuthErrorLine::Muted(
+                "(moat will fall back to your gh session)".to_string(),
+            ));
+        }
+    }
+
+    AuthError {
+        title: "Authentication failed — missing token scopes".to_string(),
+        lines,
+    }
+}
+
+/// Build a source-aware SAML-SSO error.
+pub fn format_sso_error(source: AuthSource, account: &str, url: &str) -> AuthError {
+    AuthError {
+        title: "Authentication failed — SAML SSO required".to_string(),
+        lines: vec![
+            AuthErrorLine::Text(format!(
+                "Your token (from {source}) is not SAML-SSO-authorized for `{account}`."
+            )),
+            AuthErrorLine::Blank,
+            AuthErrorLine::Bold("Authorize it here:".to_string()),
+            AuthErrorLine::Code(url.to_string()),
+            AuthErrorLine::Blank,
+            AuthErrorLine::Muted("Then re-run moat.".to_string()),
+        ],
+    }
+}
+
+/// Build the "no usable token available" error. Raised when neither
+/// `GITHUB_TOKEN`/`GH_TOKEN` are set nor `gh auth token` can produce one.
+pub fn format_no_token_error(detail: &str) -> AuthError {
+    AuthError {
+        title: "Authentication failed — no GitHub token available".to_string(),
+        lines: vec![
+            AuthErrorLine::Text(
+                "moat needs a GitHub token with the `admin:org`, `repo`, and `workflow` scopes, but none was found."
+                    .to_string(),
+            ),
+            AuthErrorLine::Muted(format!("(detail: {detail})")),
+            AuthErrorLine::Blank,
+            AuthErrorLine::Bold("How to fix:".to_string()),
+            AuthErrorLine::Numbered(1, "Sign in with the gh CLI:".to_string()),
+            AuthErrorLine::Code("gh auth login -s admin:org,repo,workflow -h github.com -w".to_string()),
+            AuthErrorLine::MutedIndented(
+                "Revoke it later: run `gh auth logout` + revoke GitHub CLI from https://github.com/settings/applications".to_string(),
+            ),
+            AuthErrorLine::Blank,
+            AuthErrorLine::Numbered(
+                2,
+                "Or set a personal access token from https://github.com/settings/tokens:"
+                    .to_string(),
+            ),
+            AuthErrorLine::Code("export GITHUB_TOKEN=<your-token>".to_string()),
+            AuthErrorLine::Blank,
+            AuthErrorLine::Muted("Then re-run moat.".to_string()),
+        ],
+    }
+}
+
+/// Build a source-aware 401-rejected error.
+pub fn format_unauthorized_error(source: AuthSource) -> AuthError {
+    let mut lines = vec![
+        AuthErrorLine::Text(format!(
+            "GitHub rejected your token (from {source}): 401 Unauthorized — it is expired, revoked, or malformed."
+        )),
+        AuthErrorLine::Blank,
+        AuthErrorLine::Bold("How to fix:".to_string()),
+    ];
+    match source {
+        AuthSource::GhCli => {
+            lines.push(AuthErrorLine::Numbered(
+                1,
+                "Re-authenticate the gh CLI with the required scopes:".to_string(),
+            ));
+            lines.push(AuthErrorLine::Code(
+                "gh auth login -s admin:org,repo,workflow -h github.com -w".to_string(),
+            ));
+            lines.push(AuthErrorLine::MutedIndented(
+                "Revoke it later: run `gh auth logout` + revoke GitHub CLI from https://github.com/settings/applications".to_string(),
+            ));
+        }
+        AuthSource::GithubTokenEnv | AuthSource::GhTokenEnv => {
+            lines.push(AuthErrorLine::Numbered(
+                1,
+                "Generate a new classic personal access token at:".to_string(),
+            ));
+            lines.push(AuthErrorLine::Code(
+                "https://github.com/settings/tokens".to_string(),
+            ));
+            lines.push(AuthErrorLine::MutedIndented(
+                "Tick these scopes: admin:org, repo, workflow".to_string(),
+            ));
+            lines.push(AuthErrorLine::MutedIndented(
+                "(fine-grained PATs are not supported — moat needs org-level access)".to_string(),
+            ));
+            lines.push(AuthErrorLine::Code(format!("export {source}=<new-token>")));
+            lines.push(AuthErrorLine::Blank);
+            lines.push(AuthErrorLine::Numbered(
+                2,
+                "Or, if the gh CLI is logged in with the right scopes, fall back to it:"
+                    .to_string(),
+            ));
+            lines.push(AuthErrorLine::Code(format!("unset {source}")));
+        }
+    }
+    lines.push(AuthErrorLine::Blank);
+    lines.push(AuthErrorLine::Muted("Then re-run moat.".to_string()));
+    AuthError {
+        title: "Authentication failed — token rejected".to_string(),
+        lines,
+    }
 }
 
 pub async fn detect_account(client: &impl GitHubClient, name: &str) -> Result<AccountKind> {
