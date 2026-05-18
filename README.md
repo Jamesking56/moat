@@ -178,6 +178,17 @@ You can also declare additional release branches that should be treated as prote
 release_branches = ["0.x", "1.x"]
 ```
 
+## Checks skipped on GitHub Free
+
+- **GitHub Free plan on private repos.** Several checks rely on features that aren't available on Free for private repositories, so they skip with `N/a (plan)`:
+  - `repositories_commits_are_signed`
+  - `repositories_pull_requests_require_reviews`
+  - `repositories_branch_protection_applies_to_admins`
+  - `repositories_release_branches_are_locked`
+  - `repositories_release_branches_have_linear_history`
+  - `repositories_secret_scanning_is_enabled`
+  - `repositories_secret_push_protection_is_enabled`
+
 ## Exit Codes
 
 - `0` — all checks passed

@@ -1,17 +1,14 @@
 use crate::checks::StateCtx;
-use crate::checks::common::repos_word;
-use crate::checks::org_context::{OrgContext, RulesetsState};
+use crate::checks::common::{inspectable_branch_protection_repos, repos_word};
+use crate::checks::org_context::OrgContext;
 use crate::checks::repo_context::{BranchEval, BranchProtectionState, RepoContext};
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories release branches are locked";
-pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (__Click__ -> New ruleset -> New branch ruleset or __Edit__ -> Existing one) > Enforcement status > __Select__ -> Active > Target branches > __Add target__ -> {branches} > Branch rules > __Check__ -> Restrict deletions > __Check__ -> Block force pushes > __Click__ -> Create/Save changes";
+pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (*Click* -> New ruleset -> New branch ruleset or *Edit* -> Existing one) > Enforcement status > *Select* -> Active > Target branches > *Add target* -> {branches} > Branch rules > *Check* -> Restrict deletions > *Check* -> Block force pushes > *Click* -> Create/Save changes";
 pub const WHY_ENABLE: &str = "Force pushes and branch deletions rewrite history — an attacker (or a tired maintainer) can erase the audit trail of a malicious commit or quietly replace a tagged release with a different tree.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
-    if ctx.rulesets.state == RulesetsState::NoPermission {
-        return CheckOutcome::skipped("?");
-    }
     let mut missing: Vec<String> = Vec::new();
     if !ctx.rulesets.non_fast_forward {
         missing.push("force pushes allowed".into());
@@ -47,13 +44,12 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
             }
         }
         BranchProtectionState::Unprotected => BranchEval::Fail(Vec::new()),
-        BranchProtectionState::NoPermission => BranchEval::Unknown,
         BranchProtectionState::PlanGated => BranchEval::PlanGated,
     })
 }
 
-pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
-    let total = ctx.repos.len();
+pub fn description(ctx: StateCtx<'_>) -> Option<String> {
+    let total = inspectable_branch_protection_repos(ctx.repos);
     let bad = ctx
         .repos
         .iter()
@@ -65,15 +61,12 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
                     ..
                 } => *allow_force_pushes || *allow_deletions,
                 BranchProtectionState::Unprotected => true,
-                _ => false,
+                BranchProtectionState::PlanGated => false,
             })
         })
         .count();
 
-    let org_state = ctx.org.and_then(|o| {
-        if o.rulesets.state == RulesetsState::NoPermission {
-            return None;
-        }
+    let org_missing = ctx.org.map(|o| {
         let mut missing: Vec<&str> = Vec::new();
         if !o.rulesets.non_fast_forward {
             missing.push("force pushes");
@@ -81,10 +74,10 @@ pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
         if !o.rulesets.deletion {
             missing.push("deletions");
         }
-        Some(missing)
+        missing
     });
 
-    Some(match (org_state, bad) {
+    Some(match (org_missing, bad) {
         (Some(missing), 0) if missing.is_empty() && total > 0 => format!(
             "force pushes and deletions are blocked by an org-level ruleset and on every release branch across all {total} {}",
             repos_word(total)

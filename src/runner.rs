@@ -1,4 +1,4 @@
-use crate::checks::org_context::{MemberList, OrgContext};
+use crate::checks::org_context::OrgContext;
 use crate::checks::repo_context::{RepoContext, RepoListing};
 use crate::checks::{CHECKS, Check, Scope};
 use crate::config::InvalidConfigError;
@@ -108,6 +108,11 @@ pub async fn ensure_viewer_can_audit_repo(
         .unwrap_or(false);
     if !is_admin {
         return Err(not_admin_bail(&format!("{owner}/{repo}")));
+    }
+    if listing.fork {
+        bail!(
+            "`{owner}/{repo}` is a fork — moat does not audit forks (their settings inherit from upstream)"
+        );
     }
     Ok(listing)
 }
@@ -224,7 +229,7 @@ pub struct CheckResult {
     pub check: &'static Check,
     pub status: Status,
     pub summary: String,
-    pub state_note: Option<String>,
+    pub description: Option<String>,
     pub affected_repos: Vec<String>,
     pub affected_repo_branches: Vec<Option<String>>,
     pub affected_repo_release_branches: Vec<Vec<String>>,
@@ -388,7 +393,7 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         org_only_issue,
     );
 
-    let state_note = (check.state_note)(crate::checks::StateCtx {
+    let description = (check.description)(crate::checks::StateCtx {
         org: ctx.org,
         repos: &active_repos,
     });
@@ -397,7 +402,7 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         check,
         status,
         summary,
-        state_note,
+        description,
         affected_repos: affected,
         affected_repo_branches: affected_branches,
         affected_repo_release_branches: affected_release_branches,
@@ -610,7 +615,7 @@ pub fn render_checks_panel(
 
         panel::blank();
 
-        if let Some(note) = &r.state_note {
+        if let Some(note) = &r.description {
             let line_text = format!("Currently: {note}.");
             for line in panel::wrap(&line_text, text_width) {
                 let l = panel::Line::new().space(5).styled(&line, panel::text);
@@ -728,12 +733,12 @@ pub fn render_checks_panel(
                 } else {
                     styled
                 };
-                let line = panel::Line::new().space(7).raw(&url, &cell);
+                let line = panel::Line::new().space(5).raw(&url, &cell);
                 panel::row(line);
             }
             if show < total {
                 let more = format!("+{} more · --verbose to list", total - show);
-                let line = panel::Line::new().space(7).styled(&more, panel::muted);
+                let line = panel::Line::new().space(5).styled(&more, panel::muted);
                 panel::row(line);
             }
         }
@@ -750,39 +755,31 @@ pub fn render_checks_panel(
     let _ = active_total;
 }
 
-fn render_member_block(title: &str, list: &MemberList, text_width: usize, verbose: bool) {
+fn render_member_block(title: &str, list: &[String], text_width: usize, verbose: bool) {
     panel::blank();
-    match list {
-        MemberList::NoPermission => {
-            let lbl = format!("{title} (requires org admin token)");
-            let l = panel::Line::new().space(5).styled(&lbl, panel::muted);
+    if list.is_empty() {
+        let lbl = format!("{title} (0)");
+        let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
+        panel::row(l);
+        let none = panel::Line::new().space(7).styled("None", panel::muted);
+        panel::row(none);
+    } else {
+        let lbl = format!("{title} ({})", list.len());
+        let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
+        panel::row(l);
+        let preview: Vec<&str> = list.iter().map(String::as_str).collect();
+        let rendered = if verbose || preview.len() <= 6 {
+            preview.join("  ")
+        } else {
+            format!(
+                "{}  +{} more · --verbose to list",
+                preview[..5].join("  "),
+                preview.len() - 5
+            )
+        };
+        for line in panel::wrap(&rendered, text_width.saturating_sub(2)) {
+            let l = panel::Line::new().space(7).styled(&line, panel::text);
             panel::row(l);
-        }
-        MemberList::Ok(v) if v.is_empty() => {
-            let lbl = format!("{title} (0)");
-            let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
-            panel::row(l);
-            let none = panel::Line::new().space(7).styled("None", panel::muted);
-            panel::row(none);
-        }
-        MemberList::Ok(v) => {
-            let lbl = format!("{title} ({})", v.len());
-            let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
-            panel::row(l);
-            let preview: Vec<&str> = v.iter().map(String::as_str).collect();
-            let rendered = if verbose || preview.len() <= 6 {
-                preview.join("  ")
-            } else {
-                format!(
-                    "{}  +{} more · --verbose to list",
-                    preview[..5].join("  "),
-                    preview.len() - 5
-                )
-            };
-            for line in panel::wrap(&rendered, text_width.saturating_sub(2)) {
-                let l = panel::Line::new().space(7).styled(&line, panel::text);
-                panel::row(l);
-            }
         }
     }
 }
@@ -818,7 +815,6 @@ fn rewrite_fix_for_free_plan(fix_text: &str, account: &str) -> String {
 enum Atom<'a> {
     Plain(&'a str),
     Url(&'a str),
-    Underline(&'a str),
     ParaBreak,
 }
 
@@ -837,13 +833,6 @@ fn parse_fix_atoms(s: &str) -> Vec<Atom<'_>> {
         if rest.is_empty() {
             break;
         }
-        if let Some(after) = rest.strip_prefix("__")
-            && let Some(end) = after.find("__")
-        {
-            atoms.push(Atom::Underline(&after[..end]));
-            rest = &after[end + 2..];
-            continue;
-        }
         if rest.starts_with("https://") || rest.starts_with("http://") {
             let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
             atoms.push(Atom::Url(&rest[..end]));
@@ -857,7 +846,6 @@ fn parse_fix_atoms(s: &str) -> Vec<Atom<'_>> {
             }
             let cur = &rest[i..];
             if cur.starts_with(|c: char| c.is_whitespace())
-                || cur.starts_with("__")
                 || cur.starts_with("http://")
                 || cur.starts_with("https://")
             {
@@ -874,7 +862,6 @@ fn parse_fix_atoms(s: &str) -> Vec<Atom<'_>> {
 fn atom_visible(a: &Atom<'_>) -> String {
     match a {
         Atom::Plain(s) | Atom::Url(s) => (*s).to_string(),
-        Atom::Underline(s) => format!("*{s}*"),
         Atom::ParaBreak => String::new(),
     }
 }
@@ -898,7 +885,6 @@ fn render_atom(a: &Atom<'_>, hyperlinks: bool) -> String {
                 styled
             }
         }
-        Atom::Underline(s) => panel::info(&format!("*{s}*")),
         Atom::ParaBreak => String::new(),
     }
 }
@@ -966,7 +952,7 @@ fn render_fix_prose(text: &str, width: usize, hyperlinks: bool) {
         if para.contains(" > ") {
             render_fix_steps(para, width, hyperlinks);
         } else {
-            render_wrapped_atoms(para, width, hyperlinks, 7);
+            render_wrapped_atoms(para, width, hyperlinks, 5);
         }
     }
 }

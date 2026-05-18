@@ -1,52 +1,45 @@
 use crate::checks::StateCtx;
 use crate::checks::common::{noun, repos_word};
-use crate::checks::org_context::{MemberList, OrgContext};
-use crate::checks::repo_context::{DirectCollaboratorsState, RepoContext};
+use crate::checks::org_context::OrgContext;
+use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories have no direct collaborators";
-pub const HOW_TO_FIX: &str = "In all the links below > Manage access > __Remove__ -> Every direct/outside user > Grant access via teams instead";
+pub const HOW_TO_FIX: &str = "In all the links below > Manage access > *Remove* -> Every direct/outside user > Grant access via teams instead";
 pub const WHY_ENABLE: &str = "Direct collaborators bypass org-level team membership audits and outlive role changes; access reviews miss them, so a long-departed contributor can keep push rights indefinitely.";
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
-    ctx.outside_collaborators
-        .outcome(CheckOutcome::pass("No outside collaborators"), |v| {
-            CheckOutcome::fail(format!(
-                "{} outside collaborator(s) with access to private/elevated repositories",
-                v.len()
-            ))
-        })
+    if ctx.outside_collaborators.is_empty() {
+        CheckOutcome::pass("No outside collaborators")
+    } else {
+        CheckOutcome::fail(format!(
+            "{} outside collaborator(s) with access to private/elevated repositories",
+            ctx.outside_collaborators.len()
+        ))
+        .with_items(ctx.outside_collaborators.clone())
+    }
 }
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
-    match &ctx.direct_collaborators {
-        DirectCollaboratorsState::NoPermission => CheckOutcome::skipped("?"),
-        DirectCollaboratorsState::Ok(v) if v.is_empty() => CheckOutcome::pass("✓"),
-        DirectCollaboratorsState::Ok(v) => CheckOutcome::fail(v.len().to_string()),
+    if ctx.direct_collaborators.is_empty() {
+        CheckOutcome::pass("✓")
+    } else {
+        CheckOutcome::fail(ctx.direct_collaborators.len().to_string())
     }
 }
 
-pub fn state_note(ctx: StateCtx<'_>) -> Option<String> {
-    let mut total = 0usize;
+pub fn description(ctx: StateCtx<'_>) -> Option<String> {
+    let total = ctx.repos.len();
     let mut bad_repos = 0usize;
     let mut total_direct = 0usize;
     for r in ctx.repos {
-        match &r.direct_collaborators {
-            DirectCollaboratorsState::NoPermission => continue,
-            DirectCollaboratorsState::Ok(v) => {
-                total += 1;
-                if !v.is_empty() {
-                    bad_repos += 1;
-                    total_direct += v.len();
-                }
-            }
+        if !r.direct_collaborators.is_empty() {
+            bad_repos += 1;
+            total_direct += r.direct_collaborators.len();
         }
     }
 
-    let org_outside = ctx.org.and_then(|o| match &o.outside_collaborators {
-        MemberList::NoPermission => None,
-        MemberList::Ok(v) => Some(v.len()),
-    });
+    let org_outside = ctx.org.map(|o| o.outside_collaborators.len());
 
     let org_phrase: Option<String> = org_outside.map(|n| {
         if n == 0 {

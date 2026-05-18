@@ -16,6 +16,12 @@ pub struct Cli {
     /// Color theme. `auto` detects the terminal background via COLORFGBG.
     #[arg(long, value_enum, default_value_t = Theme::Auto)]
     pub theme: Theme,
+
+    /// Output format. `pretty` prints the styled terminal report; `json` and
+    /// `markdown` suppress all panels and emit a machine-readable report on
+    /// stdout instead.
+    #[arg(long, value_enum, default_value_t = Format::Pretty)]
+    pub format: Format,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
@@ -24,6 +30,14 @@ pub enum Theme {
     Auto,
     Dark,
     Light,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum Format {
+    #[default]
+    Pretty,
+    Json,
+    Markdown,
 }
 
 impl From<Theme> for crate::support::panel::ThemeChoice {
