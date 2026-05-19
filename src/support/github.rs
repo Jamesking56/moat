@@ -98,8 +98,8 @@ fn rate_limit_error(
         || body_lc.contains("abuse detection");
 
     let is_429 = status == StatusCode::TOO_MANY_REQUESTS;
-    let is_403_rate_limited = status == StatusCode::FORBIDDEN
-        && (remaining_zero || body_mentions_rate_limit);
+    let is_403_rate_limited =
+        status == StatusCode::FORBIDDEN && (remaining_zero || body_mentions_rate_limit);
 
     if !is_429 && !is_403_rate_limited {
         return None;
@@ -116,9 +116,7 @@ fn rate_limit_error(
         .map(format_retry_hint)
         .unwrap_or_else(|| "in a few minutes".to_string());
 
-    let mut msg = format!(
-        "GitHub API rate limit reached ({kind}). Try again {when}."
-    );
+    let mut msg = format!("GitHub API rate limit reached ({kind}). Try again {when}.");
     if kind == "primary" {
         msg.push_str(
             "\n\nAuthenticated requests get 5,000/hour. To raise this, run moat \
@@ -512,8 +510,7 @@ impl HttpGitHubClient {
                         }
                         _ => {}
                     }
-                } else if status == StatusCode::TOO_MANY_REQUESTS
-                    || status == StatusCode::FORBIDDEN
+                } else if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::FORBIDDEN
                 {
                     let headers = resp.headers().clone();
                     let body = resp.text().await.unwrap_or_default();
@@ -569,8 +566,7 @@ impl HttpGitHubClient {
                         }
                         _ => {}
                     }
-                } else if status == StatusCode::TOO_MANY_REQUESTS
-                    || status == StatusCode::FORBIDDEN
+                } else if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::FORBIDDEN
                 {
                     let headers = resp.headers().clone();
                     let body = resp.text().await.unwrap_or_default();
