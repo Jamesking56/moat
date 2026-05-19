@@ -1,13 +1,13 @@
 name: Release
 
+permissions:
+  contents: read
+
 on:
   push:
     tags:
       - "v*.*.*"
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   build:
