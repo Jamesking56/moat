@@ -46,13 +46,21 @@ async fn run() -> Result<i32> {
     }
 
     if cli.self_update {
-        let updated = tokio::task::spawn_blocking(support::update::run_self_update)
+        use support::update::SelfUpdateOutcome;
+        let outcome = tokio::task::spawn_blocking(support::update::run_self_update)
             .await
-            .ok()
-            .flatten();
-        let body = match updated {
-            Some(v) => format!("Moat updated to v{}.", v.trim_start_matches('v')),
-            None => "Moat is already up to date.".to_string(),
+            .unwrap_or_else(|e| SelfUpdateOutcome::Failed(e.to_string()));
+        let body = match outcome {
+            SelfUpdateOutcome::Updated(v) => {
+                format!("Moat updated to v{}.", v.trim_start_matches('v'))
+            }
+            SelfUpdateOutcome::UpToDate => "Moat is already up to date.".to_string(),
+            SelfUpdateOutcome::ManagedExternally { manager, latest } => format!(
+                "Moat v{} is available. This binary is managed by {}; run `brew upgrade moat` to update.",
+                latest.trim_start_matches('v'),
+                manager,
+            ),
+            SelfUpdateOutcome::Failed(e) => format!("Self-update failed: {e}"),
         };
         runner::render_info_panel("Self-update", &[body]);
         return Ok(0);

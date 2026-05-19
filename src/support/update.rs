@@ -86,11 +86,43 @@ fn parse_version(s: &str) -> (u32, u32, u32) {
     )
 }
 
-/// Perform an explicit self-update. Returns `Some(version)` if the on-disk
-/// binary was actually replaced, `None` otherwise. Only invoked when the user
-/// passes `--self-update`.
-pub fn run_self_update() -> Option<String> {
+pub enum SelfUpdateOutcome {
+    Updated(String),
+    UpToDate,
+    ManagedExternally {
+        manager: &'static str,
+        latest: String,
+    },
+    Failed(String),
+}
+
+fn external_manager_for_current_exe() -> Option<&'static str> {
+    let exe = std::env::current_exe().ok()?;
+    let path = exe.to_string_lossy();
+    if path.starts_with("/opt/homebrew/")
+        || path.starts_with("/usr/local/Cellar/")
+        || path.starts_with("/usr/local/opt/")
+        || path.contains("/linuxbrew/")
+    {
+        Some("Homebrew")
+    } else {
+        None
+    }
+}
+
+/// Perform an explicit self-update. Only invoked when the user passes
+/// `--self-update`.
+pub fn run_self_update() -> SelfUpdateOutcome {
     let current = env!("CARGO_PKG_VERSION");
+
+    if let Some(manager) = external_manager_for_current_exe() {
+        let latest = fetch_latest_from_github().unwrap_or_else(|| current.to_string());
+        if is_newer_than_current(&latest) {
+            write_cache(&latest);
+            return SelfUpdateOutcome::ManagedExternally { manager, latest };
+        }
+        return SelfUpdateOutcome::UpToDate;
+    }
 
     let mut builder = self_update::backends::github::Update::configure();
     builder
@@ -107,12 +139,18 @@ pub fn run_self_update() -> Option<String> {
         builder.auth_token(&token);
     }
 
-    let updater = builder.build().ok()?;
-    let status = updater.update().ok()?;
+    let updater = match builder.build() {
+        Ok(u) => u,
+        Err(e) => return SelfUpdateOutcome::Failed(e.to_string()),
+    };
+    let status = match updater.update() {
+        Ok(s) => s,
+        Err(e) => return SelfUpdateOutcome::Failed(e.to_string()),
+    };
     write_cache(status.version());
     if status.updated() {
-        Some(status.version().to_string())
+        SelfUpdateOutcome::Updated(status.version().to_string())
     } else {
-        None
+        SelfUpdateOutcome::UpToDate
     }
 }
