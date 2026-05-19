@@ -1229,7 +1229,7 @@ pub fn render_checks_panel(
                 let l = panel::Line::new().space(5).styled(&line, panel::muted);
                 panel::row(l);
             }
-        } else if r.status == Status::Skipped {
+        } else if r.status == Status::Skipped && plan_free && r.private_repos_in_scope > 0 {
             let note = "This check was skipped because it requires a paid GitHub plan (Pro, Team, or Enterprise) to evaluate on private repositories.";
             for line in panel::wrap(note, text_width.saturating_sub(2)) {
                 let l = panel::Line::new().space(5).styled(&line, panel::muted);
