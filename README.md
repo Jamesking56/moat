@@ -9,7 +9,7 @@
 
 ## Introduction
 
-**moat** brings security posture auditing to your GitHub organization & repositories. It works with any GitHub **user**, **organization**, or **repository** — auditing the controls you want in place before a compromised maintainer account or a leaked token turns into an incident.
+**Moat** audits the security posture of your GitHub organization & repositories. It works with any GitHub **user**, **organization**, or **repository** — verifying that the security controls GitHub offers (2FA enforcement, branch protection, secret scanning, and more) are actually enabled and configured correctly.
 
 It checks **two-factor authentication**, **branch protection**, **signed commits**, **secret scanning**, **Dependabot alerts**, **workflow permissions**, **pinned actions**, **repository webhooks**, and more. Zero config — just install and run.
 
@@ -197,7 +197,7 @@ release_branches = ["0.x", "1.x"]
 
 ## Contributing
 
-Thank you for considering contributing to moat! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+Thank you for considering contributing to Moat! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
 
 ## Code of Conduct
 
@@ -209,4 +209,4 @@ Please review [our security policy](https://github.com/nunomaduro/moat/security/
 
 ## License
 
-moat is open-sourced software licensed under the [MIT license](LICENSE).
+Moat is open-sourced software licensed under the [MIT license](LICENSE).
