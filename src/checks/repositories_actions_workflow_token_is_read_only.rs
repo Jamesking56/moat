@@ -8,6 +8,10 @@ pub const LABEL: &str = "Repositories actions workflow token is read only";
 pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/actions > Workflow permissions > *Select* -> Read repository contents and packages permissions > *Click* -> Save";
 pub const WHY_ENABLE: &str = "Every workflow inherits this token by default; granting write at the org or repo level means a typo'd action reference or a hijacked third-party action can rewrite history, tags, and releases without ever needing a maintainer's credentials.";
 
+pub fn how_to_fix(_ctx: StateCtx<'_>) -> &'static str {
+    HOW_TO_FIX
+}
+
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     match ctx.workflow_token {
         WorkflowTokenState::Read => CheckOutcome::pass("Read-only by default for new repositories"),

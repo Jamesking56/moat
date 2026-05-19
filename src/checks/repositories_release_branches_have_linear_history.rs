@@ -8,6 +8,10 @@ pub const LABEL: &str = "Repositories release branches have linear history";
 pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (*Click* -> New ruleset -> New branch ruleset or *Edit* -> Existing one) > Enforcement status > *Select* -> Active > Target branches > *Add target* -> {branches} > Branch rules > *Check* -> Require linear history > *Click* -> Create/Save changes";
 pub const WHY_ENABLE: &str = "Merge commits can hide unreviewed parents — a `git merge` of an unprotected side branch can introduce code that no reviewer ever saw, while still appearing as a normal merge in the PR.";
 
+pub fn how_to_fix(_ctx: StateCtx<'_>) -> &'static str {
+    HOW_TO_FIX
+}
+
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     if ctx.rulesets.required_linear_history {
         CheckOutcome::pass("Required by an org-level ruleset")

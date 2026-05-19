@@ -41,6 +41,10 @@ fn findings_for_workflows(wfs: &[Workflow]) -> Vec<String> {
     findings
 }
 
+pub fn how_to_fix(_ctx: StateCtx<'_>) -> &'static str {
+    HOW_TO_FIX
+}
+
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     if ctx.workflows.is_empty() {
         return CheckOutcome::skipped("—");

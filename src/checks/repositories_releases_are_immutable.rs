@@ -6,7 +6,16 @@ use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories releases are immutable";
 pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/repository-defaults > Releases > *Select* -> All repositories";
+pub const HOW_TO_FIX_USER_ACCOUNT: &str = "https://github.com/{org}/{repo}/settings#releases > Releases > *Check* -> Immutable releases > *Click* -> Save";
 pub const WHY_ENABLE: &str = "Without immutability, an existing tag can be moved or its assets replaced after the fact; downstream consumers pinned to a version they audited will silently fetch different bytes the next time they install.";
+
+pub fn how_to_fix(ctx: StateCtx<'_>) -> &'static str {
+    if ctx.org.is_none() {
+        HOW_TO_FIX_USER_ACCOUNT
+    } else {
+        HOW_TO_FIX
+    }
+}
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     match ctx.release_immutability {

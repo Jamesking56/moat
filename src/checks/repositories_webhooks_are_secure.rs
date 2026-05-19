@@ -8,6 +8,10 @@ pub const LABEL: &str = "Repositories webhooks are secure";
 pub const HOW_TO_FIX: &str = "https://github.com/{org}/{repo}/settings/hooks > *Edit* -> Each webhook > Payload URL > *Set* -> https:// endpoint > Secret > *Set* -> A secret token > *Click* -> Update webhook";
 pub const WHY_ENABLE: &str = "Plain-HTTP hooks leak payloads (and any secrets inside them) to any network on the path, and a hook without a shared secret has no way to prove the request actually came from GitHub.";
 
+pub fn how_to_fix(_ctx: StateCtx<'_>) -> &'static str {
+    HOW_TO_FIX
+}
+
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     if ctx.webhooks.is_empty() {
         return CheckOutcome::pass("No organization webhooks configured");

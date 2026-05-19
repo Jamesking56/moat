@@ -6,6 +6,10 @@ pub const LABEL: &str = "Organization new members default to no permissions";
 pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/member_privileges > Base permissions > *Select* -> No permission -> *Click* -> Change base permission to \"No permission\"";
 pub const WHY_ENABLE: &str = "This setting decides the blast radius of a single compromised account; with write or admin as the default, one stolen session can push to every repo at once instead of just the ones that member legitimately touches.";
 
+pub fn how_to_fix(_ctx: StateCtx<'_>) -> &'static str {
+    HOW_TO_FIX
+}
+
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     match &ctx.default_repository_permission {
         DefaultRepoPermissionState::None => {

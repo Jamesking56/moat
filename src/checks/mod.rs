@@ -46,7 +46,7 @@ pub struct StateCtx<'a> {
 pub struct Check {
     pub id: &'static str,
     pub label: &'static str,
-    pub how_to_fix: &'static str,
+    pub how_to_fix: fn(StateCtx<'_>) -> &'static str,
     pub why_enable: &'static str,
     pub org_eval: Option<fn(&OrgContext) -> CheckOutcome>,
     pub repo_eval: Option<fn(&RepoContext) -> CheckOutcome>,
@@ -103,7 +103,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "organization_requires_two_factor",
         label: organization_requires_two_factor::LABEL,
-        how_to_fix: organization_requires_two_factor::HOW_TO_FIX,
+        how_to_fix: organization_requires_two_factor::how_to_fix,
         why_enable: organization_requires_two_factor::WHY_ENABLE,
         org_eval: Some(organization_requires_two_factor::org_check),
         repo_eval: None,
@@ -116,7 +116,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "organization_members_all_have_two_factor",
         label: organization_members_all_have_two_factor::LABEL,
-        how_to_fix: organization_members_all_have_two_factor::HOW_TO_FIX,
+        how_to_fix: organization_members_all_have_two_factor::how_to_fix,
         why_enable: organization_members_all_have_two_factor::WHY_ENABLE,
         org_eval: Some(organization_members_all_have_two_factor::org_check),
         repo_eval: None,
@@ -129,7 +129,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "organization_new_members_default_to_no_permissions",
         label: organization_new_members_default_to_no_permissions::LABEL,
-        how_to_fix: organization_new_members_default_to_no_permissions::HOW_TO_FIX,
+        how_to_fix: organization_new_members_default_to_no_permissions::how_to_fix,
         why_enable: organization_new_members_default_to_no_permissions::WHY_ENABLE,
         org_eval: Some(organization_new_members_default_to_no_permissions::org_check),
         repo_eval: None,
@@ -143,7 +143,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_actions_workflow_token_is_read_only",
         label: repositories_actions_workflow_token_is_read_only::LABEL,
-        how_to_fix: repositories_actions_workflow_token_is_read_only::HOW_TO_FIX,
+        how_to_fix: repositories_actions_workflow_token_is_read_only::how_to_fix,
         why_enable: repositories_actions_workflow_token_is_read_only::WHY_ENABLE,
         org_eval: Some(repositories_actions_workflow_token_is_read_only::org_check),
         repo_eval: Some(repositories_actions_workflow_token_is_read_only::repo_check),
@@ -156,7 +156,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_secret_scanning_is_enabled",
         label: repositories_secret_scanning_is_enabled::LABEL,
-        how_to_fix: repositories_secret_scanning_is_enabled::HOW_TO_FIX,
+        how_to_fix: repositories_secret_scanning_is_enabled::how_to_fix,
         why_enable: repositories_secret_scanning_is_enabled::WHY_ENABLE,
         org_eval: Some(repositories_secret_scanning_is_enabled::org_check),
         repo_eval: Some(repositories_secret_scanning_is_enabled::repo_check),
@@ -169,7 +169,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_secret_push_protection_is_enabled",
         label: repositories_secret_push_protection_is_enabled::LABEL,
-        how_to_fix: repositories_secret_push_protection_is_enabled::HOW_TO_FIX,
+        how_to_fix: repositories_secret_push_protection_is_enabled::how_to_fix,
         why_enable: repositories_secret_push_protection_is_enabled::WHY_ENABLE,
         org_eval: Some(repositories_secret_push_protection_is_enabled::org_check),
         repo_eval: Some(repositories_secret_push_protection_is_enabled::repo_check),
@@ -182,7 +182,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_dependabot_alerts_are_enabled",
         label: repositories_dependabot_alerts_are_enabled::LABEL,
-        how_to_fix: repositories_dependabot_alerts_are_enabled::HOW_TO_FIX,
+        how_to_fix: repositories_dependabot_alerts_are_enabled::how_to_fix,
         why_enable: repositories_dependabot_alerts_are_enabled::WHY_ENABLE,
         org_eval: Some(repositories_dependabot_alerts_are_enabled::org_check),
         repo_eval: Some(repositories_dependabot_alerts_are_enabled::repo_check),
@@ -195,7 +195,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_dependabot_security_updates_are_enabled",
         label: repositories_dependabot_security_updates_are_enabled::LABEL,
-        how_to_fix: repositories_dependabot_security_updates_are_enabled::HOW_TO_FIX,
+        how_to_fix: repositories_dependabot_security_updates_are_enabled::how_to_fix,
         why_enable: repositories_dependabot_security_updates_are_enabled::WHY_ENABLE,
         org_eval: Some(repositories_dependabot_security_updates_are_enabled::org_check),
         repo_eval: Some(repositories_dependabot_security_updates_are_enabled::repo_check),
@@ -208,7 +208,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_releases_are_immutable",
         label: repositories_releases_are_immutable::LABEL,
-        how_to_fix: repositories_releases_are_immutable::HOW_TO_FIX,
+        how_to_fix: repositories_releases_are_immutable::how_to_fix,
         why_enable: repositories_releases_are_immutable::WHY_ENABLE,
         org_eval: Some(repositories_releases_are_immutable::org_check),
         repo_eval: Some(repositories_releases_are_immutable::repo_check),
@@ -221,7 +221,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_fork_pull_requests_require_approval",
         label: repositories_fork_pull_requests_require_approval::LABEL,
-        how_to_fix: repositories_fork_pull_requests_require_approval::HOW_TO_FIX,
+        how_to_fix: repositories_fork_pull_requests_require_approval::how_to_fix,
         why_enable: repositories_fork_pull_requests_require_approval::WHY_ENABLE,
         org_eval: Some(repositories_fork_pull_requests_require_approval::org_check),
         repo_eval: Some(repositories_fork_pull_requests_require_approval::repo_check),
@@ -234,7 +234,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_commits_are_signed",
         label: repositories_commits_are_signed::LABEL,
-        how_to_fix: repositories_commits_are_signed::HOW_TO_FIX,
+        how_to_fix: repositories_commits_are_signed::how_to_fix,
         why_enable: repositories_commits_are_signed::WHY_ENABLE,
         org_eval: Some(repositories_commits_are_signed::org_check),
         repo_eval: Some(repositories_commits_are_signed::repo_check),
@@ -247,7 +247,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_pull_requests_require_reviews",
         label: repositories_pull_requests_require_reviews::LABEL,
-        how_to_fix: repositories_pull_requests_require_reviews::HOW_TO_FIX,
+        how_to_fix: repositories_pull_requests_require_reviews::how_to_fix,
         why_enable: repositories_pull_requests_require_reviews::WHY_ENABLE,
         org_eval: Some(repositories_pull_requests_require_reviews::org_check),
         repo_eval: Some(repositories_pull_requests_require_reviews::repo_check),
@@ -260,7 +260,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_branch_protection_applies_to_admins",
         label: repositories_branch_protection_applies_to_admins::LABEL,
-        how_to_fix: repositories_branch_protection_applies_to_admins::HOW_TO_FIX,
+        how_to_fix: repositories_branch_protection_applies_to_admins::how_to_fix,
         why_enable: repositories_branch_protection_applies_to_admins::WHY_ENABLE,
         org_eval: Some(repositories_branch_protection_applies_to_admins::org_check),
         repo_eval: Some(repositories_branch_protection_applies_to_admins::repo_check),
@@ -273,7 +273,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_release_branches_are_locked",
         label: repositories_release_branches_are_locked::LABEL,
-        how_to_fix: repositories_release_branches_are_locked::HOW_TO_FIX,
+        how_to_fix: repositories_release_branches_are_locked::how_to_fix,
         why_enable: repositories_release_branches_are_locked::WHY_ENABLE,
         org_eval: Some(repositories_release_branches_are_locked::org_check),
         repo_eval: Some(repositories_release_branches_are_locked::repo_check),
@@ -286,7 +286,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_release_branches_have_linear_history",
         label: repositories_release_branches_have_linear_history::LABEL,
-        how_to_fix: repositories_release_branches_have_linear_history::HOW_TO_FIX,
+        how_to_fix: repositories_release_branches_have_linear_history::how_to_fix,
         why_enable: repositories_release_branches_have_linear_history::WHY_ENABLE,
         org_eval: Some(repositories_release_branches_have_linear_history::org_check),
         repo_eval: Some(repositories_release_branches_have_linear_history::repo_check),
@@ -299,7 +299,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_webhooks_are_secure",
         label: repositories_webhooks_are_secure::LABEL,
-        how_to_fix: repositories_webhooks_are_secure::HOW_TO_FIX,
+        how_to_fix: repositories_webhooks_are_secure::how_to_fix,
         why_enable: repositories_webhooks_are_secure::WHY_ENABLE,
         org_eval: Some(repositories_webhooks_are_secure::org_check),
         repo_eval: Some(repositories_webhooks_are_secure::repo_check),
@@ -312,7 +312,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_have_no_direct_collaborators",
         label: repositories_have_no_direct_collaborators::LABEL,
-        how_to_fix: repositories_have_no_direct_collaborators::HOW_TO_FIX,
+        how_to_fix: repositories_have_no_direct_collaborators::how_to_fix,
         why_enable: repositories_have_no_direct_collaborators::WHY_ENABLE,
         org_eval: Some(repositories_have_no_direct_collaborators::org_check),
         repo_eval: Some(repositories_have_no_direct_collaborators::repo_check),
@@ -325,7 +325,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_private_vulnerability_reporting_is_enabled",
         label: repositories_private_vulnerability_reporting_is_enabled::LABEL,
-        how_to_fix: repositories_private_vulnerability_reporting_is_enabled::HOW_TO_FIX,
+        how_to_fix: repositories_private_vulnerability_reporting_is_enabled::how_to_fix,
         why_enable: repositories_private_vulnerability_reporting_is_enabled::WHY_ENABLE,
         org_eval: Some(repositories_private_vulnerability_reporting_is_enabled::org_check),
         repo_eval: Some(repositories_private_vulnerability_reporting_is_enabled::repo_check),
@@ -339,7 +339,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_have_security_policy",
         label: repositories_have_security_policy::LABEL,
-        how_to_fix: repositories_have_security_policy::HOW_TO_FIX,
+        how_to_fix: repositories_have_security_policy::how_to_fix,
         why_enable: repositories_have_security_policy::WHY_ENABLE,
         org_eval: None,
         repo_eval: Some(repositories_have_security_policy::repo_check),
@@ -352,7 +352,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_workflow_actions_are_pinned",
         label: repositories_workflow_actions_are_pinned::LABEL,
-        how_to_fix: repositories_workflow_actions_are_pinned::HOW_TO_FIX,
+        how_to_fix: repositories_workflow_actions_are_pinned::how_to_fix,
         why_enable: repositories_workflow_actions_are_pinned::WHY_ENABLE,
         org_eval: None,
         repo_eval: Some(repositories_workflow_actions_are_pinned::repo_check),
@@ -365,7 +365,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_pull_request_target_is_safe",
         label: repositories_pull_request_target_is_safe::LABEL,
-        how_to_fix: repositories_pull_request_target_is_safe::HOW_TO_FIX,
+        how_to_fix: repositories_pull_request_target_is_safe::how_to_fix,
         why_enable: repositories_pull_request_target_is_safe::WHY_ENABLE,
         org_eval: None,
         repo_eval: Some(repositories_pull_request_target_is_safe::repo_check),
@@ -378,7 +378,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_workflow_permissions_are_restricted",
         label: repositories_workflow_permissions_are_restricted::LABEL,
-        how_to_fix: repositories_workflow_permissions_are_restricted::HOW_TO_FIX,
+        how_to_fix: repositories_workflow_permissions_are_restricted::how_to_fix,
         why_enable: repositories_workflow_permissions_are_restricted::WHY_ENABLE,
         org_eval: None,
         repo_eval: Some(repositories_workflow_permissions_are_restricted::repo_check),
@@ -391,7 +391,7 @@ pub static CHECKS: &[Check] = &[
     Check {
         id: "repositories_have_dependabot_config",
         label: repositories_have_dependabot_config::LABEL,
-        how_to_fix: repositories_have_dependabot_config::HOW_TO_FIX,
+        how_to_fix: repositories_have_dependabot_config::how_to_fix,
         why_enable: repositories_have_dependabot_config::WHY_ENABLE,
         org_eval: None,
         repo_eval: Some(repositories_have_dependabot_config::repo_check),

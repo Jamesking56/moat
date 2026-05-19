@@ -13,6 +13,7 @@ fn result_with(status: Status) -> CheckResult {
         status,
         summary: String::new(),
         description: None,
+        how_to_fix: "",
         affected_repos: Vec::new(),
         affected_repo_branches: Vec::new(),
         affected_repo_release_branches: Vec::new(),

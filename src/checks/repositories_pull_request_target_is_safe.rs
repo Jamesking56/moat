@@ -8,6 +8,10 @@ pub const LABEL: &str = "Repositories pull request target is safe";
 pub const HOW_TO_FIX: &str = "Switch the trigger to `pull_request`, or ensure the workflow does not check out `github.event.pull_request.head.ref` (only check out the base ref).";
 pub const WHY_ENABLE: &str = "`pull_request_target` runs with the base repo's secrets and write token; if the workflow then checks out the PR's code, any fork PR executes attacker-controlled code with full repo privileges.";
 
+pub fn how_to_fix(_ctx: StateCtx<'_>) -> &'static str {
+    HOW_TO_FIX
+}
+
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     if ctx.workflows.is_empty() {
         return CheckOutcome::skipped("—");

@@ -719,6 +719,7 @@ pub struct CheckResult {
     pub status: Status,
     pub summary: String,
     pub description: Option<String>,
+    pub how_to_fix: &'static str,
     pub affected_repos: Vec<String>,
     pub affected_repo_branches: Vec<Option<String>>,
     pub affected_repo_release_branches: Vec<Vec<String>>,
@@ -902,12 +903,17 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         org: ctx.org,
         repos: &active_repos,
     });
+    let how_to_fix = (check.how_to_fix)(crate::checks::StateCtx {
+        org: ctx.org,
+        repos: &active_repos,
+    });
 
     CheckResult {
         check,
         status,
         summary,
         description,
+        how_to_fix,
         affected_repos: affected,
         affected_repo_branches: affected_branches,
         affected_repo_release_branches: affected_release_branches,
@@ -1151,9 +1157,10 @@ pub fn render_checks_panel(
         let plan_free = org
             .map(|o| o.plan == crate::checks::org_context::OrgPlan::Free)
             .unwrap_or(false);
-        // User accounts have no org-level rulesets URL, so per-repo links are
-        // the only actionable target — treat them like Free-plan orgs.
+        // User accounts have no `/organizations/{name}/...` URLs at all, and
+        // Free-plan orgs can't use org rulesets — both need per-repo links.
         let user_account = org.is_none();
+        let rewrite_org_url = is_finding && (user_account || (plan_free && r.check.ruleset_based));
         let rules_link = is_finding && r.check.ruleset_based && (plan_free || user_account);
 
         if is_finding {
@@ -1169,9 +1176,8 @@ pub fn render_checks_panel(
                 .collect();
             branches.sort();
             branches.dedup();
-            let mut fix_text =
-                substitute_fix_template(r.check.how_to_fix, account, repo, &branches);
-            if rules_link {
+            let mut fix_text = substitute_fix_template(r.how_to_fix, account, repo, &branches);
+            if rewrite_org_url {
                 let distinct: std::collections::HashSet<&str> =
                     r.affected_repos.iter().map(|s| s.as_str()).collect();
                 let single = if distinct.len() == 1 {
@@ -1345,13 +1351,16 @@ fn substitute_fix_template(
 }
 
 fn rewrite_fix_for_free_plan(fix_text: &str, account: &str, single_repo: Option<&str>) -> String {
-    let prefix = format!("https://github.com/organizations/{account}/settings/rules ");
-    match fix_text.strip_prefix(&prefix) {
-        Some(rest) => match single_repo {
-            Some(repo) => format!("https://github.com/{account}/{repo}/settings/rules {rest}"),
-            None => format!("In all the links below {rest}"),
-        },
-        None => fix_text.to_string(),
+    let prefix = format!("https://github.com/organizations/{account}/");
+    let Some(rest) = fix_text.strip_prefix(&prefix) else {
+        return fix_text.to_string();
+    };
+    let split = rest.find(char::is_whitespace).unwrap_or(rest.len());
+    let path = &rest[..split];
+    let tail = &rest[split..];
+    match single_repo {
+        Some(repo) => format!("https://github.com/{account}/{repo}/{path}{tail}"),
+        None => format!("In all the links below{tail}"),
     }
 }
 

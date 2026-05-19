@@ -10,6 +10,10 @@ pub const LABEL: &str = "Repositories branch protection applies to admins";
 pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (*Click* -> New ruleset -> New branch ruleset or *Edit* -> Existing one) > Bypass list > *Remove* -> Every role/team/user > *Click* -> Create/Save changes";
 pub const WHY_ENABLE: &str = "If admins can bypass the ruleset, a single compromised admin token is enough to push unsigned or unreviewed code straight to a release branch — the rule becomes advisory.";
 
+pub fn how_to_fix(_ctx: StateCtx<'_>) -> &'static str {
+    HOW_TO_FIX
+}
+
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     if !ctx.rulesets.any_active {
         return CheckOutcome::fail("No active org-level rulesets");

@@ -8,6 +8,10 @@ pub const LABEL: &str = "Repositories commits are signed";
 pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (*Click* -> New ruleset -> New branch ruleset or *Edit* -> Existing one) > Enforcement status > *Select* -> Active > Target branches > *Add target* -> {branches} > Branch rules > *Check* -> Require signed commits > *Click* -> Create/Save changes";
 pub const WHY_ENABLE: &str = "A stolen developer token can push commits authored as anyone; requiring a verified signature ties each commit to a key the attacker doesn't have, turning a leaked token from a code-push into a noisy failure.";
 
+pub fn how_to_fix(_ctx: StateCtx<'_>) -> &'static str {
+    HOW_TO_FIX
+}
+
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     if ctx.rulesets.required_signatures {
         CheckOutcome::pass("Required by an org-level ruleset")

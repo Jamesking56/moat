@@ -6,7 +6,16 @@ use crate::support::outcome::CheckOutcome;
 
 pub const LABEL: &str = "Repositories secret scanning is enabled";
 pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/security_products > Advanced Security > (*Click* -> Set up or *Edit* -> Existing one) > Secret scanning > *Select* -> Enabled > *Click* -> Review > Set up Advanced Security > *Click* -> Save and apply/enable";
+pub const HOW_TO_FIX_USER_ACCOUNT: &str = "https://github.com/{org}/{repo}/settings/security_analysis > Secret scanning > *Click* -> Enable";
 pub const WHY_ENABLE: &str = "Secrets accidentally committed stay valid until someone notices; scanning gives you minutes-to-hours warning instead of waiting for a leaked-credential abuse alert from a downstream provider.";
+
+pub fn how_to_fix(ctx: StateCtx<'_>) -> &'static str {
+    if ctx.org.is_none() {
+        HOW_TO_FIX_USER_ACCOUNT
+    } else {
+        HOW_TO_FIX
+    }
+}
 
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     ctx.secret_scanning_default.to_outcome()

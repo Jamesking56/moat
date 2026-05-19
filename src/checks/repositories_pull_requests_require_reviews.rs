@@ -8,6 +8,10 @@ pub const LABEL: &str = "Repositories pull requests require reviews";
 pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/rules > (*Click* -> New ruleset -> New branch ruleset or *Edit* -> Existing one) > Enforcement status > *Select* -> Active > Target branches > *Add target* -> {branches} > Branch rules > *Check* -> Require a pull request before merging > Required approvals > *Set* -> 1 (or more) > *Check* -> Dismiss stale pull request approvals when new commits are pushed > *Check* -> Require approval of the most recent reviewable push > *Check* -> Require review from Code Owners > *Click* -> Create/Save changes";
 pub const WHY_ENABLE: &str = "Without required reviews, a single compromised contributor account can push directly to a release branch — peer review is the cheapest mechanism that catches malicious patches before they ship. Stale-review dismissal and last-push approval close the gap where an attacker amends a previously-approved PR; code-owner review ensures changes to sensitive paths are seen by the right people.";
 
+pub fn how_to_fix(_ctx: StateCtx<'_>) -> &'static str {
+    HOW_TO_FIX
+}
+
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     if !ctx.rulesets.pull_request {
         return CheckOutcome::fail("Not required by any org-level ruleset");

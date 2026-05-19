@@ -8,6 +8,10 @@ pub const LABEL: &str = "Repositories workflow actions are pinned";
 pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/actions > General actions permissions > *Check* -> Require actions to be pinned to a full-length commit SHA > *Click* -> Save\n\nThen, in each affected workflow file below, replace every tag or branch ref with the full-length commit SHA (keep the tag as a trailing comment for readability). For example:\n```diff\n    - name: Cache dependencies\n-      uses: actions/cache@v5\n+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5\n```\nTip: hand the file list to your coding agent and ask it to pin every `uses:` ref — it can resolve each tag to its commit SHA for you.";
 pub const WHY_ENABLE: &str = "Tags and branches are mutable — when tj-actions/changed-files was compromised in 2025, the attacker repointed the existing tags, so every workflow `@v1` instantly ran malicious code; SHA pins make that impossible, and the repo-level \"Require actions to be pinned\" setting prevents anyone from re-introducing unpinned refs. Note: enforcement happens at workflow run time — a push with unpinned `uses:` refs is not rejected, but any workflow it triggers will fail to start until the refs are pinned.";
 
+pub fn how_to_fix(_ctx: StateCtx<'_>) -> &'static str {
+    HOW_TO_FIX
+}
+
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     let enforced = matches!(ctx.sha_pinning, SHAPinningState::Enforced);
     let not_enforced = matches!(ctx.sha_pinning, SHAPinningState::NotEnforced);

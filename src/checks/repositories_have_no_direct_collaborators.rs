@@ -8,6 +8,10 @@ pub const LABEL: &str = "Repositories have no direct collaborators";
 pub const HOW_TO_FIX: &str = "In all the links below > Manage access > *Remove* -> Every direct/outside user > Grant access via teams instead";
 pub const WHY_ENABLE: &str = "Direct collaborators bypass org-level team membership audits and outlive role changes; access reviews miss them, so a long-departed contributor can keep push rights indefinitely.";
 
+pub fn how_to_fix(_ctx: StateCtx<'_>) -> &'static str {
+    HOW_TO_FIX
+}
+
 pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
     if ctx.outside_collaborators.is_empty() {
         CheckOutcome::pass("No outside collaborators")
