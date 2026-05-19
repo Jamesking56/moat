@@ -47,10 +47,10 @@ pub fn how_to_fix(_ctx: StateCtx<'_>) -> &'static str {
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     if ctx.workflows.is_empty() {
-        return CheckOutcome::skipped("—");
+        return CheckOutcome::skipped_no_data("—", "repos, no workflows");
     }
     if !ctx.workflows.has_any_workflows() {
-        return CheckOutcome::skipped("N/A");
+        return CheckOutcome::skipped_no_data("N/A", "repos, no workflows");
     }
 
     let multi = ctx.workflows.len() > 1;

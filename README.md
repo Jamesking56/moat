@@ -9,7 +9,7 @@
 
 ## Introduction
 
-**moat** brings supply-chain hygiene to your GitHub organization & repositories. It works with any GitHub **user**, **organization**, or **repository** — auditing the controls you want in place before a malicious dependency, a compromised maintainer account, or a leaked token turns into an incident.
+**moat** brings security posture auditing to your GitHub organization & repositories. It works with any GitHub **user**, **organization**, or **repository** — auditing the controls you want in place before a compromised maintainer account or a leaked token turns into an incident.
 
 It checks **two-factor authentication**, **branch protection**, **signed commits**, **secret scanning**, **Dependabot alerts**, **workflow permissions**, **pinned actions**, **repository webhooks**, and more. Zero config — just install and run.
 

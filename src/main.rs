@@ -31,12 +31,12 @@ async fn run() -> Result<i32> {
     };
     panel::init_theme(cli.theme.into());
 
-    if cli.help {
+    if cli.help || (cli.account.is_none() && !cli.self_update && !cli.version) {
         use clap::CommandFactory;
         let inner_width = panel::width().saturating_sub(8);
         let mut cmd = cli::Cli::command().term_width(inner_width);
         let help = cmd.render_help().to_string();
-        runner::render_raw_panel("Help", &help);
+        runner::render_raw_panel("Moat", &help);
         return Ok(0);
     }
 

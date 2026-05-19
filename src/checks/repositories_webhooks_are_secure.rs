@@ -96,9 +96,9 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
         ))
     } else {
         Some(format!(
-            "{repo_insecure} repository {} across {bad_repos}/{total} {} lack HTTPS or a secret",
+            "{repo_insecure} repository {} across {bad_repos} {} lack HTTPS or a secret",
             noun(repo_insecure, "webhook", "webhooks"),
-            repos_word(total)
+            repos_word(bad_repos)
         ))
     };
 

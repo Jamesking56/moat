@@ -6,7 +6,6 @@ pub mod organization_members_all_have_two_factor;
 pub mod organization_new_members_default_to_no_permissions;
 pub mod organization_requires_two_factor;
 pub mod repositories_actions_workflow_token_is_read_only;
-pub mod repositories_branch_protection_applies_to_admins;
 pub mod repositories_commits_are_signed;
 pub mod repositories_dependabot_alerts_are_enabled;
 pub mod repositories_dependabot_security_updates_are_enabled;
@@ -82,11 +81,7 @@ impl Check {
 
     /// The label to use for the applicable-repo subset in summaries.
     pub fn repo_noun(&self) -> &'static str {
-        if self.applies_to_repo.is_some() {
-            "public repositories"
-        } else {
-            "repositories"
-        }
+        "repositories"
     }
 }
 
@@ -252,19 +247,6 @@ pub static CHECKS: &[Check] = &[
         org_eval: Some(repositories_pull_requests_require_reviews::org_check),
         repo_eval: Some(repositories_pull_requests_require_reviews::repo_check),
         description: repositories_pull_requests_require_reviews::description,
-        applies_to_repo: None,
-        org_only: false,
-        ruleset_based: true,
-        repo_link_path: None,
-    },
-    Check {
-        id: "repositories_branch_protection_applies_to_admins",
-        label: repositories_branch_protection_applies_to_admins::LABEL,
-        how_to_fix: repositories_branch_protection_applies_to_admins::how_to_fix,
-        why_enable: repositories_branch_protection_applies_to_admins::WHY_ENABLE,
-        org_eval: Some(repositories_branch_protection_applies_to_admins::org_check),
-        repo_eval: Some(repositories_branch_protection_applies_to_admins::repo_check),
-        description: repositories_branch_protection_applies_to_admins::description,
         applies_to_repo: None,
         org_only: false,
         ruleset_based: true,

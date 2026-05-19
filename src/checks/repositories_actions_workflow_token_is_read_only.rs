@@ -53,12 +53,12 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
             repos_word(total)
         ),
         (Some(false), n) => format!(
-            "{n}/{total} {} grant workflow tokens write access to repository contents",
-            repos_word(total)
+            "{n} {} grant workflow tokens write access to repository contents",
+            repos_word(n)
         ),
         (Some(true), n) if n > 0 => format!(
-            "the org default grants write access and {n}/{total} {} grant workflow tokens write access",
-            repos_word(total)
+            "the org default grants write access and {n} {} grant workflow tokens write access",
+            repos_word(n)
         ),
         (Some(true), _) => {
             "the org default grants workflow tokens write access to repository contents".into()
@@ -68,8 +68,8 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
             repos_word(total)
         ),
         (None, n) => format!(
-            "{n}/{total} {} grant workflow tokens write access to repository contents",
-            repos_word(total)
+            "{n} {} grant workflow tokens write access to repository contents",
+            repos_word(n)
         ),
     })
 }

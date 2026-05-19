@@ -87,8 +87,8 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
             repos_word(total)
         ),
         (Some(missing), n) if missing.is_empty() => format!(
-            "org-level ruleset blocks force pushes and deletions, but {n}/{total} {} leave release branches unlocked",
-            repos_word(total)
+            "org-level ruleset blocks force pushes and deletions, but {n} {} leave release branches unlocked",
+            repos_word(n)
         ),
         (Some(missing), 0) if total > 0 => format!(
             "no org-level ruleset blocks {}, though every release branch across {total} {} is locked",
@@ -96,9 +96,9 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
             repos_word(total)
         ),
         (Some(missing), n) if n > 0 => format!(
-            "no org-level ruleset blocks {}; {n}/{total} {} leave release branches unlocked",
+            "no org-level ruleset blocks {}; {n} {} leave release branches unlocked",
             missing.join(" or "),
-            repos_word(total)
+            repos_word(n)
         ),
         (Some(missing), _) => format!("no org-level ruleset blocks {}", missing.join(" or ")),
         (None, 0) if total > 0 => format!(
@@ -106,8 +106,8 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
             repos_word(total)
         ),
         (None, n) if n > 0 => format!(
-            "{n}/{total} {} leave release branches unlocked against force pushes or deletions",
-            repos_word(total)
+            "{n} {} leave release branches unlocked against force pushes or deletions",
+            repos_word(n)
         ),
         _ => return None,
     })

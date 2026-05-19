@@ -107,7 +107,7 @@ impl BranchProtections {
         F: Fn(&BranchProtectionState) -> BranchEval,
     {
         if self.is_empty() {
-            return CheckOutcome::skipped("—");
+            return CheckOutcome::skipped_no_data("—", "repos, no release branches");
         }
         let multi = self.branches.len() > 1;
         let mut failures: Vec<String> = Vec::new();
@@ -146,7 +146,7 @@ impl BranchProtections {
         } else if any_pass {
             CheckOutcome::pass("✓")
         } else if any_plan_gated {
-            CheckOutcome::skipped("N/A (plan)")
+            CheckOutcome::skipped_plan_gated("N/A (plan)")
         } else {
             CheckOutcome::pass("✓")
         }

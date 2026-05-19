@@ -32,7 +32,7 @@ fn evaluate(state: ForkPrContributorApprovalState) -> CheckOutcome {
             CheckOutcome::fail("Required only for first-time contributors new to GitHub")
         }
         ForkPrContributorApprovalState::Other => CheckOutcome::fail("Not enabled"),
-        ForkPrContributorApprovalState::PlanGated => CheckOutcome::skipped("N/A (plan)"),
+        ForkPrContributorApprovalState::PlanGated => CheckOutcome::skipped_plan_gated("N/A (plan)"),
     }
 }
 
@@ -69,24 +69,24 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
             repos_word(total)
         ),
         (Some(true), n) => format!(
-            "fork PR approval is required org-wide for all external contributors, but {n}/{total} {} override it",
-            repos_word(total)
+            "fork PR approval is required org-wide for all external contributors, but {n} {} override it",
+            repos_word(n)
         ),
         (Some(false), 0) => format!(
             "the org default does not require approval for every external contributor, though all {total} {} require it",
             repos_word(total)
         ),
         (Some(false), n) => format!(
-            "the org default does not require approval for every external contributor; {n}/{total} {} run fork workflows without it",
-            repos_word(total)
+            "the org default does not require approval for every external contributor; {n} {} run fork workflows without it",
+            repos_word(n)
         ),
         (None, 0) => format!(
             "fork PR workflows require manual approval for all external contributors across all {total} {}",
             repos_word(total)
         ),
         (None, n) => format!(
-            "{n}/{total} {} run fork PR workflows without approval for every external contributor",
-            repos_word(total)
+            "{n} {} run fork PR workflows without approval for every external contributor",
+            repos_word(n)
         ),
     })
 }

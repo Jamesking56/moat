@@ -35,8 +35,8 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
         )
     } else {
         format!(
-            "{missing}/{total} {} have no SECURITY.md disclosure policy",
-            public_repos_word(total)
+            "{missing} {} have no SECURITY.md disclosure policy",
+            public_repos_word(missing)
         )
     })
 }

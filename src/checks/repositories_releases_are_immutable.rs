@@ -31,7 +31,7 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     match ctx.release_immutability {
         ReleaseImmutabilityRepoState::Enabled => CheckOutcome::pass("✓"),
         ReleaseImmutabilityRepoState::Disabled => CheckOutcome::fail("✗"),
-        ReleaseImmutabilityRepoState::PlanGated => CheckOutcome::skipped("N/A (plan)"),
+        ReleaseImmutabilityRepoState::PlanGated => CheckOutcome::skipped_plan_gated("N/A (plan)"),
     }
 }
 
@@ -63,29 +63,26 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
             repos_word(total)
         ),
         (Some("all"), n) => format!(
-            "immutable releases are enforced org-wide, but {n}/{total} {} still allow tag and asset replacement",
-            repos_word(total)
+            "immutable releases are enforced org-wide, but {n} {} still allow tag and asset replacement",
+            repos_word(n)
         ),
         (Some("selected"), n) => format!(
-            "immutable releases are enforced on selected repositories only; {n}/{total} {} allow tag and asset replacement",
-            repos_word(total)
+            "immutable releases are enforced on selected repositories only; {n} {} allow tag and asset replacement",
+            repos_word(n)
         ),
         (Some("none"), 0) => format!(
             "immutable releases are not enforced org-wide, though all {total} {} have it enabled",
             repos_word(total)
         ),
         (Some("none"), n) => format!(
-            "immutable releases are not enforced org-wide; {n}/{total} {} allow tag and asset replacement",
-            repos_word(total)
+            "immutable releases are not enforced org-wide; {n} {} allow tag and asset replacement",
+            repos_word(n)
         ),
         (None, 0) => format!(
             "immutable releases are enabled on all {total} {}",
             repos_word(total)
         ),
-        (None, n) => format!(
-            "{n}/{total} {} allow tag and asset replacement",
-            repos_word(total)
-        ),
+        (None, n) => format!("{n} {} allow tag and asset replacement", repos_word(n)),
         _ => return None,
     })
 }

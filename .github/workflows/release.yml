@@ -161,7 +161,7 @@ jobs:
           # This file is updated automatically by the release workflow.
 
           class Moat < Formula
-            desc "supply-chain hygiene for your github organization & repositories"
+            desc "security posture auditing for your github organization & repositories"
             homepage "https://github.com/laravel/moat"
             version "${VERSION}"
             license "MIT"

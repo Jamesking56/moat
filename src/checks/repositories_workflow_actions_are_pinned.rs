@@ -39,7 +39,7 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     }
 
     if !has_workflows {
-        return CheckOutcome::skipped("N/A (no workflows)");
+        return CheckOutcome::skipped_no_data("N/A (no workflows)", "repos, no workflows");
     }
 
     if enforced && unpinned.is_empty() {

@@ -22,6 +22,8 @@ fn result_with(status: Status) -> CheckResult {
         private_repos_excluded_by_plan: 0,
         private_repos_in_scope: 0,
         private_repos_filtered_out: 0,
+        repos_skipped_no_data: 0,
+        no_data_label: None,
         skip_reason: None,
     }
 }

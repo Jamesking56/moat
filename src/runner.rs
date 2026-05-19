@@ -3,7 +3,7 @@ use crate::checks::repo_context::{RepoContext, RepoListing};
 use crate::checks::{CHECKS, Check, Scope};
 use crate::config::InvalidConfigError;
 use crate::support::github::{AuthSource, Fetch, GitHubClient, Preflight};
-use crate::support::outcome::Status;
+use crate::support::outcome::{SkipReason, Status};
 use crate::support::panel;
 use anyhow::{Result, anyhow, bail};
 use futures::stream::{self, StreamExt};
@@ -738,6 +738,14 @@ pub struct CheckResult {
     /// alongside the plan-exclusion note so the user sees why nothing was
     /// evaluated.
     pub private_repos_filtered_out: usize,
+    /// Repos that ended up Skipped because the check couldn't evaluate them
+    /// (e.g. no workflows, no relevant configuration). Counts both private
+    /// and public repos — distinct from plan-gated exclusions above.
+    pub repos_skipped_no_data: usize,
+    /// Human-readable label for the no-data skip category, rendered in the
+    /// summary breakdown (e.g. "repos, no workflows"). `None` falls back to
+    /// the generic "repo empty" label.
+    pub no_data_label: Option<&'static str>,
     /// Human-readable explanation of why the check was skipped. Only set
     /// when `status == Skipped` and the reason is not already conveyed by
     /// the plan-gated note rendered elsewhere.
@@ -786,6 +794,8 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
     let mut private_repos_in_scope = 0usize;
     let mut private_repos_excluded_by_plan = 0usize;
     let mut private_repos_filtered_out = 0usize;
+    let mut no_data_skipped = 0usize;
+    let mut no_data_label: Option<&'static str> = None;
     let mut active_repos: Vec<&RepoContext> = Vec::new();
     if let Some(f) = check.repo_eval {
         for r in ctx.repos {
@@ -810,8 +820,29 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
                 private_repos_in_scope += 1;
             }
             let outcome = f(r);
-            if r.private && outcome.status == Status::Skipped {
-                private_repos_excluded_by_plan += 1;
+            if outcome.status == Status::Skipped {
+                match &outcome.skip_reason {
+                    Some(SkipReason::PlanGated) => {
+                        if r.private {
+                            private_repos_excluded_by_plan += 1;
+                        }
+                    }
+                    Some(SkipReason::NoData(label)) => {
+                        no_data_skipped += 1;
+                        if no_data_label.is_none() {
+                            no_data_label = Some(*label);
+                        }
+                    }
+                    None => {
+                        // Unclassified skip — preserve legacy behavior: private
+                        // repos count as plan-gated, public as no-data.
+                        if r.private {
+                            private_repos_excluded_by_plan += 1;
+                        } else {
+                            no_data_skipped += 1;
+                        }
+                    }
+                }
             }
             match outcome.status {
                 Status::Fail => {
@@ -924,8 +955,8 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
     let skip_reason: Option<&'static str> = if status == Status::Skipped {
         if all_repos_disabled {
             Some("All repositories opted out of this check via configuration.")
-        } else if plan_free && private_repos_in_scope > 0 && repo_skipped > 0 {
-            // The dedicated plan-gated note will explain this — don't duplicate.
+        } else if private_repos_excluded_by_plan > 0 {
+            // The dedicated plan-gated footer will explain this — don't duplicate.
             None
         } else if let Some(pred) = check.applies_to_repo
             && repo_applicable == 0
@@ -933,7 +964,7 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
             if pred as usize == crate::checks::public_only as usize
                 && private_repos_filtered_out > 0
             {
-                // The plan-excluded note rendered elsewhere will surface this.
+                // The public-only footer rendered elsewhere will surface this.
                 None
             } else if pred as usize == crate::checks::public_only as usize {
                 Some(
@@ -972,6 +1003,8 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         private_repos_excluded_by_plan,
         private_repos_in_scope,
         private_repos_filtered_out,
+        repos_skipped_no_data: no_data_skipped,
+        no_data_label,
         skip_reason,
     }
 }
@@ -995,14 +1028,10 @@ fn build_summary(
     if org_only_issue && matches!(status, Status::Warn | Status::Fail) {
         return format!("{active_total}/{active_total} enabled · default policy missing");
     }
-    let denom = if check.repo_eval.is_some() {
-        repo_applicable
-    } else {
-        active_total
-    };
+    let denom = active_total;
     match status {
         Status::Fail => format!("{failing_repos}/{denom} {noun} failing"),
-        Status::Pass => format!("{denom}/{denom} {noun} passing"),
+        Status::Pass => format!("{repo_applicable}/{denom} {noun} passing"),
         Status::Warn => format!("{denom} {noun} with warnings"),
         Status::Skipped => String::new(),
     }
@@ -1094,22 +1123,14 @@ pub fn render_checks_panel(
         Status::Warn => 2,
         Status::Fail => 3,
     };
-    let breadth = |r: &CheckResult| {
-        if matches!(r.status, Status::Fail | Status::Warn) && r.summary == "org-wide" {
-            usize::MAX
-        } else {
-            r.affected_repos.len()
-        }
-    };
     let mut sorted: Vec<&CheckResult> = results.iter().collect();
-    sorted.sort_by_key(|r| (order(r.status), breadth(r)));
+    sorted.sort_by_key(|r| order(r.status));
 
     panel::top_section("Checks");
 
     let inner = panel::width() - 2;
     let text_width = inner.saturating_sub(6);
 
-    let count = sorted.len();
     for (i, r) in sorted.iter().enumerate() {
         panel::blank();
 
@@ -1178,6 +1199,43 @@ pub fn render_checks_panel(
                 .space(5)
                 .styled(&r.summary, summary_render);
             panel::row(summary_line);
+        }
+
+        let private_skipped = r.private_repos_excluded_by_plan + r.private_repos_filtered_out;
+        let no_data_skipped = r.repos_skipped_no_data;
+        let no_data_label = r.no_data_label.unwrap_or("repo empty");
+        let breakdown: Vec<(usize, &str, usize)> = [
+            (private_skipped, "private repo skipped", 1),
+            (no_data_skipped, no_data_label, 2),
+        ]
+        .into_iter()
+        .filter(|(n, _, _)| *n > 0)
+        .collect();
+        if !breakdown.is_empty() && !r.summary.is_empty() {
+            let summary_width = r.summary.chars().count();
+            let summary_on_title_line = fits;
+            for (n, label, gap) in &breakdown {
+                let count_str = n.to_string();
+                let content = count_str.chars().count() + gap + label.chars().count();
+                let left_pad = summary_width.saturating_sub(content);
+                let gap_str = " ".repeat(*gap);
+                let text = format!(
+                    "{:left_pad$}{count_str}{gap_str}{label}",
+                    "",
+                    left_pad = left_pad,
+                );
+                let visible = text.chars().count();
+                let line = if summary_on_title_line {
+                    let pad = inner.saturating_sub(visible + 2);
+                    panel::Line::new()
+                        .space(pad)
+                        .styled(&text, panel::muted)
+                        .space(2)
+                } else {
+                    panel::Line::new().space(5).styled(&text, panel::muted)
+                };
+                panel::row(line);
+            }
         }
 
         panel::blank();
@@ -1268,48 +1326,44 @@ pub fn render_checks_panel(
 
         if let Some(o) = org
             && r.status != Status::Skipped
+            && r.check.id == "repositories_have_no_direct_collaborators"
         {
-            match r.check.id {
-                "repositories_have_no_direct_collaborators" => {
-                    render_member_block(
-                        "Outside collaborators",
-                        &o.outside_collaborators,
-                        text_width,
-                        verbose,
-                    );
-                }
-                "repositories_branch_protection_applies_to_admins" => {
-                    render_member_block("Bypass list", &o.admins, text_width, verbose);
-                }
-                _ => {}
-            }
+            render_member_block(
+                "Outside collaborators",
+                &o.outside_collaborators,
+                text_width,
+                verbose,
+            );
         }
 
-        let plan_excluded_count = if plan_free {
-            r.private_repos_excluded_by_plan + r.private_repos_filtered_out
-        } else {
-            r.private_repos_excluded_by_plan
-        };
-        if plan_excluded_count > 0 && (plan_free || r.private_repos_excluded_by_plan > 0) {
+        let plan_count = r.private_repos_excluded_by_plan;
+        let filtered_count = r.private_repos_filtered_out;
+        if plan_count > 0 || filtered_count > 0 {
             if is_finding {
                 panel::blank();
             }
-            let note = format!(
-                "{} private repositories were excluded due to the organization being on GitHub's Free plan or equivalent.",
-                plan_excluded_count,
-            );
-            for line in panel::wrap(&note, text_width.saturating_sub(2)) {
-                let l = panel::Line::new().space(5).styled(&line, panel::muted);
-                panel::row(l);
+            if plan_count > 0 {
+                let note = format!(
+                    "{plan_count} private repositories were excluded due to the organization being on GitHub's Free plan or equivalent.",
+                );
+                for line in panel::wrap(&note, text_width.saturating_sub(2)) {
+                    let l = panel::Line::new().space(5).styled(&line, panel::muted);
+                    panel::row(l);
+                }
             }
-        } else if r.status == Status::Skipped && plan_free && r.private_repos_in_scope > 0 {
-            let note = format!(
-                "{} private repositories were excluded due to the organization being on GitHub's Free plan or equivalent.",
-                r.private_repos_in_scope,
-            );
-            for line in panel::wrap(&note, text_width.saturating_sub(2)) {
-                let l = panel::Line::new().space(5).styled(&line, panel::muted);
-                panel::row(l);
+            if filtered_count > 0 {
+                let noun = if filtered_count == 1 {
+                    "private repository was"
+                } else {
+                    "private repositories were"
+                };
+                let note = format!(
+                    "{filtered_count} {noun} excluded — this check only applies to public repositories.",
+                );
+                for line in panel::wrap(&note, text_width.saturating_sub(2)) {
+                    let l = panel::Line::new().space(5).styled(&line, panel::muted);
+                    panel::row(l);
+                }
             }
         }
 
@@ -1367,7 +1421,7 @@ pub fn render_checks_panel(
         }
 
         panel::blank();
-        if i + 1 < count {
+        if i + 1 < sorted.len() {
             panel::divider();
         }
     }
@@ -1384,7 +1438,7 @@ fn render_member_block(title: &str, list: &[String], text_width: usize, verbose:
         let lbl = format!("{title} (0)");
         let l = panel::Line::new().space(5).styled(&lbl, panel::accent_bold);
         panel::row(l);
-        let none = panel::Line::new().space(7).styled("None", panel::muted);
+        let none = panel::Line::new().space(5).styled("None", panel::muted);
         panel::row(none);
     } else {
         let lbl = format!("{title} ({})", list.len());
@@ -1401,7 +1455,7 @@ fn render_member_block(title: &str, list: &[String], text_width: usize, verbose:
             )
         };
         for line in panel::wrap(&rendered, text_width.saturating_sub(2)) {
-            let l = panel::Line::new().space(7).styled(&line, panel::text);
+            let l = panel::Line::new().space(5).styled(&line, panel::text);
             panel::row(l);
         }
     }

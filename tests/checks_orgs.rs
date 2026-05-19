@@ -7,7 +7,6 @@ use moat::checks::{
     organization_members_all_have_two_factor as members_without_2fa,
     organization_new_members_default_to_no_permissions as default_repo_permission,
     organization_requires_two_factor as two_factor_required,
-    repositories_branch_protection_applies_to_admins as admin_enforcement,
     repositories_dependabot_security_updates_are_enabled as dependabot_security_updates,
     repositories_fork_pull_requests_require_approval as fork_pr_approval,
     repositories_private_vulnerability_reporting_is_enabled as pvr,
@@ -177,31 +176,6 @@ fn rulesets(
         deletion,
         has_bypass_actors,
     }
-}
-
-#[test]
-fn admin_enforcement_org_no_rulesets_fails() {
-    let mut c = base_ctx();
-    c.rulesets = rulesets(false, false, false, false, false);
-    let o = admin_enforcement::org_check(&c);
-    assert_eq!(o.status, Status::Fail);
-    assert!(o.summary.to_ascii_lowercase().contains("no active"));
-}
-
-#[test]
-fn admin_enforcement_org_bypass_actors_fails() {
-    let mut c = base_ctx();
-    c.rulesets = rulesets(true, false, false, false, true);
-    let o = admin_enforcement::org_check(&c);
-    assert_eq!(o.status, Status::Fail);
-    assert!(o.summary.to_ascii_lowercase().contains("bypass"));
-}
-
-#[test]
-fn admin_enforcement_org_clean_passes() {
-    let mut c = base_ctx();
-    c.rulesets = rulesets(true, false, false, false, false);
-    assert_eq!(admin_enforcement::org_check(&c).status, Status::Pass);
 }
 
 #[test]

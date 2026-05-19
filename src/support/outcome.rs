@@ -5,6 +5,19 @@ pub struct CheckOutcome {
     pub summary: String,
     pub items: Vec<String>,
     pub failing_branches: Vec<String>,
+    pub skip_reason: Option<SkipReason>,
+}
+
+/// Why a check returned `Skipped`. Drives how the runner buckets the skip in
+/// summary breakdowns and footer notes — plan-gated skips are reported as
+/// private-repo exclusions; no-data skips use the supplied label.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SkipReason {
+    /// Feature is gated by the repo's plan (typically a private repo on Free).
+    PlanGated,
+    /// The repo had no data for the check to evaluate (e.g. no workflows).
+    /// The label is rendered verbatim in the summary breakdown.
+    NoData(&'static str),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
@@ -23,6 +36,7 @@ impl CheckOutcome {
             summary: summary.into(),
             items: Vec::new(),
             failing_branches: Vec::new(),
+            skip_reason: None,
         }
     }
     pub fn fail(summary: impl Into<String>) -> Self {
@@ -31,6 +45,7 @@ impl CheckOutcome {
             summary: summary.into(),
             items: Vec::new(),
             failing_branches: Vec::new(),
+            skip_reason: None,
         }
     }
     pub fn warn(summary: impl Into<String>) -> Self {
@@ -39,6 +54,7 @@ impl CheckOutcome {
             summary: summary.into(),
             items: Vec::new(),
             failing_branches: Vec::new(),
+            skip_reason: None,
         }
     }
     pub fn skipped(summary: impl Into<String>) -> Self {
@@ -47,7 +63,21 @@ impl CheckOutcome {
             summary: summary.into(),
             items: Vec::new(),
             failing_branches: Vec::new(),
+            skip_reason: None,
         }
+    }
+    /// Skipped because the feature is gated by the org/repo plan.
+    pub fn skipped_plan_gated(summary: impl Into<String>) -> Self {
+        let mut o = Self::skipped(summary);
+        o.skip_reason = Some(SkipReason::PlanGated);
+        o
+    }
+    /// Skipped because the repo has no data for this check. The label is shown
+    /// verbatim in the breakdown (e.g. "repos, no workflows").
+    pub fn skipped_no_data(summary: impl Into<String>, label: &'static str) -> Self {
+        let mut o = Self::skipped(summary);
+        o.skip_reason = Some(SkipReason::NoData(label));
+        o
     }
     pub fn with_items(mut self, items: Vec<String>) -> Self {
         self.items = items;

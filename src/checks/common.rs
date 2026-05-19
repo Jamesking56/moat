@@ -87,18 +87,18 @@ pub fn feature_state_phrase(
             repos_word(total)
         ),
         (Some(false), n) => format!(
-            "{feature} is enabled by default org-wide, but {n}/{total} {} override it",
-            repos_word(total)
+            "{feature} is enabled by default org-wide, but {n} {} override it",
+            repos_word(n)
         ),
         (Some(true), n) if n > 0 => format!(
-            "{feature} is not enabled by default; disabled on {n}/{total} {}",
-            repos_word(total)
+            "{feature} is not enabled by default; disabled on {n} {}",
+            repos_word(n)
         ),
         (Some(true), _) => format!("{feature} is not enabled by default for new repositories"),
         (None, 0) if total > 0 => {
             format!("{feature} is enabled on all {total} {}", repos_word(total))
         }
-        (None, n) if n > 0 => format!("{feature} is disabled on {n}/{total} {}", repos_word(total)),
+        (None, n) if n > 0 => format!("{feature} is disabled on {n} {}", repos_word(n)),
         _ => return None,
     })
 }
@@ -143,16 +143,16 @@ where
             repos_word(total)
         ),
         (Some(true), n) => format!(
-            "{feature} is required by an org-level ruleset, but {n}/{total} {} override it on release branches",
-            repos_word(total)
+            "{feature} is required by an org-level ruleset, but {n} {} override it on release branches",
+            repos_word(n)
         ),
         (Some(false), 0) if total > 0 => format!(
             "{feature} is not required by any org-level ruleset, though every release branch across {total} {} enforces it",
             repos_word(total)
         ),
         (Some(false), n) if n > 0 => format!(
-            "{feature} is not required by any org-level ruleset; {n}/{total} {} leave release branches unprotected",
-            repos_word(total)
+            "{feature} is not required by any org-level ruleset; {n} {} leave release branches unprotected",
+            repos_word(n)
         ),
         (Some(false), _) => format!("{feature} is not required by any org-level ruleset"),
         (None, 0) if total > 0 => format!(
@@ -160,8 +160,8 @@ where
             repos_word(total)
         ),
         (None, n) if n > 0 => format!(
-            "{n}/{total} {} leave release branches unprotected from {feature}-related changes",
-            repos_word(total)
+            "{n} {} leave release branches unprotected from {feature}-related changes",
+            repos_word(n)
         ),
         _ => return None,
     })
@@ -213,7 +213,7 @@ impl FeatureState {
         match self {
             FeatureState::Enabled => CheckOutcome::pass("✓"),
             FeatureState::Disabled => CheckOutcome::fail("✗"),
-            FeatureState::PlanGated => CheckOutcome::skipped("N/A (plan)"),
+            FeatureState::PlanGated => CheckOutcome::skipped_plan_gated("N/A (plan)"),
         }
     }
 }

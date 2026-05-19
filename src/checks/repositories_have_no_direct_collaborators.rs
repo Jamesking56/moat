@@ -65,9 +65,9 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
         ))
     } else {
         Some(format!(
-            "{total_direct} direct {} retain access across {bad_repos}/{total} {}",
+            "{total_direct} direct {} retain access across {bad_repos} {}",
             noun(total_direct, "collaborator", "collaborators"),
-            repos_word(total)
+            repos_word(bad_repos)
         ))
     };
 

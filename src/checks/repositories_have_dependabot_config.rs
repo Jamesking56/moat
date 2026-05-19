@@ -12,7 +12,7 @@ pub fn how_to_fix(_ctx: StateCtx<'_>) -> &'static str {
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     if !ctx.workflows.has_any_workflows() {
-        return CheckOutcome::skipped("N/A");
+        return CheckOutcome::skipped_no_data("N/A", "repos, no workflows");
     }
 
     match &ctx.dependabot_config {

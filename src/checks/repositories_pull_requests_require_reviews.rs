@@ -87,16 +87,16 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
             repos_word(total)
         ),
         (Some(true), n) => format!(
-            "the full pull-request review policy is required by an org-level ruleset but not fully enforced on release branches in {n}/{total} {}",
-            repos_word(total)
+            "the full pull-request review policy is required by an org-level ruleset but not fully enforced on release branches in {n} {}",
+            repos_word(n)
         ),
         (Some(false), 0) if total > 0 => format!(
             "no org-level ruleset requires the full pull-request review policy, though every release branch across {total} {} enforces it",
             repos_word(total)
         ),
         (Some(false), n) if n > 0 => format!(
-            "no org-level ruleset requires the full pull-request review policy; {n}/{total} {} miss one or more sub-requirements (stale dismissal, last-push approval, or code-owner review when CODEOWNERS is present) on release branches",
-            repos_word(total)
+            "no org-level ruleset requires the full pull-request review policy; {n} {} miss one or more sub-requirements (stale dismissal, last-push approval, or code-owner review when CODEOWNERS is present) on release branches",
+            repos_word(n)
         ),
         (Some(false), _) => {
             "no org-level ruleset requires the full pull-request review policy".to_string()
@@ -106,8 +106,8 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
             repos_word(total)
         ),
         (None, n) if n > 0 => format!(
-            "{n}/{total} {} miss one or more sub-requirements of the pull-request review policy (stale dismissal, last-push approval, or code-owner review when CODEOWNERS is present) on release branches",
-            repos_word(total)
+            "{n} {} miss one or more sub-requirements of the pull-request review policy (stale dismissal, last-push approval, or code-owner review when CODEOWNERS is present) on release branches",
+            repos_word(n)
         ),
         _ => return None,
     })

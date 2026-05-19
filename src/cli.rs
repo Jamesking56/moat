@@ -4,12 +4,11 @@ use clap::{Parser, ValueEnum};
 #[command(
     name = "moat",
     version,
-    about = "Supply-chain hygiene for your GitHub organization & repositories",
+    about = "Security posture auditing for your GitHub organization & repositories",
     disable_help_flag = true,
     disable_version_flag = true
 )]
 pub struct Cli {
-    #[arg(required_unless_present_any = ["self_update", "help", "version"])]
     pub account: Option<String>,
 
     /// Print help.

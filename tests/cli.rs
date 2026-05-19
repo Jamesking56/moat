@@ -30,8 +30,11 @@ fn version_prints_package_version() {
 }
 
 #[test]
-fn no_subcommand_errors() {
-    moat().assert().failure();
+fn no_account_prints_help() {
+    moat()
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ACCOUNT"));
 }
 
 #[test]

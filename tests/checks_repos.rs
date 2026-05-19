@@ -8,7 +8,6 @@ use moat::checks::repo_context::{
 };
 use moat::checks::{
     repositories_actions_workflow_token_is_read_only as workflow_token,
-    repositories_branch_protection_applies_to_admins as admin_enforcement,
     repositories_commits_are_signed as signed_commits,
     repositories_dependabot_alerts_are_enabled as dependabot_alerts,
     repositories_dependabot_security_updates_are_enabled as dependabot_security_updates,
@@ -915,20 +914,6 @@ fn prt_safe_pull_request_target_without_checkout_passes() {
         "on: pull_request_target\njobs:\n  a:\n    steps:\n      - run: echo hi\n",
     )]);
     assert_eq!(prt_safe::repo_check(&c).status, Status::Pass);
-}
-
-#[test]
-fn admin_enforcement_repo_check_flag_routing() {
-    let pass = ctx(
-        protected_full(true, false, false, false),
-        WorkflowTokenState::Read,
-    );
-    let fail = ctx(
-        protected_full(false, false, false, false),
-        WorkflowTokenState::Read,
-    );
-    assert_eq!(admin_enforcement::repo_check(&pass).status, Status::Pass);
-    assert_eq!(admin_enforcement::repo_check(&fail).status, Status::Fail);
 }
 
 #[test]
