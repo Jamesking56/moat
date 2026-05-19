@@ -90,7 +90,7 @@ impl Check {
     }
 }
 
-fn public_only(r: &RepoContext) -> bool {
+pub fn public_only(r: &RepoContext) -> bool {
     !r.private
 }
 

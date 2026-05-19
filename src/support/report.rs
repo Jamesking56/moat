@@ -130,7 +130,7 @@ impl Report {
         let s = &self.summary;
         out.push_str(&format!("**{}% hardened**\n\n", s.percent_hardened));
         out.push_str(&format!(
-            "- {} passed\n- {} critical\n- {} warnings\n- {} skipped\n- {} total\n\n",
+            "- {} passed\n- {} failed\n- {} warnings\n- {} skipped\n- {} total\n\n",
             s.passed, s.failed, s.warned, s.skipped, s.total
         ));
 
@@ -224,6 +224,8 @@ mod tests {
                 org_only_issue: false,
                 private_repos_excluded_by_plan: 0,
                 private_repos_in_scope: 0,
+                private_repos_filtered_out: 0,
+                skip_reason: None,
             },
             CheckResult {
                 check,
@@ -238,6 +240,8 @@ mod tests {
                 org_only_issue: false,
                 private_repos_excluded_by_plan: 0,
                 private_repos_in_scope: 0,
+                private_repos_filtered_out: 0,
+                skip_reason: None,
             },
         ]
     }

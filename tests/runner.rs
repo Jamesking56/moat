@@ -21,6 +21,8 @@ fn result_with(status: Status) -> CheckResult {
         org_only_issue: false,
         private_repos_excluded_by_plan: 0,
         private_repos_in_scope: 0,
+        private_repos_filtered_out: 0,
+        skip_reason: None,
     }
 }
 

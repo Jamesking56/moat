@@ -733,6 +733,15 @@ pub struct CheckResult {
     /// filtered out by `applies_to_repo`). Used as the denominator when
     /// surfacing the plan-exclusion note.
     pub private_repos_in_scope: usize,
+    /// Number of private repos filtered out by `applies_to_repo` (e.g. a
+    /// public-only check on a repo set that is entirely private). Surfaced
+    /// alongside the plan-exclusion note so the user sees why nothing was
+    /// evaluated.
+    pub private_repos_filtered_out: usize,
+    /// Human-readable explanation of why the check was skipped. Only set
+    /// when `status == Skipped` and the reason is not already conveyed by
+    /// the plan-gated note rendered elsewhere.
+    pub skip_reason: Option<&'static str>,
 }
 
 pub fn exit_code(results: &[CheckResult]) -> i32 {
@@ -776,6 +785,7 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
     let mut repo_disabled = 0usize;
     let mut private_repos_in_scope = 0usize;
     let mut private_repos_excluded_by_plan = 0usize;
+    let mut private_repos_filtered_out = 0usize;
     let mut active_repos: Vec<&RepoContext> = Vec::new();
     if let Some(f) = check.repo_eval {
         for r in ctx.repos {
@@ -785,6 +795,9 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
             if let Some(pred) = check.applies_to_repo
                 && !pred(r)
             {
+                if r.private {
+                    private_repos_filtered_out += 1;
+                }
                 continue;
             }
             if r.config.is_off(check.id) {
@@ -908,6 +921,43 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         repos: &active_repos,
     });
 
+    let skip_reason: Option<&'static str> = if status == Status::Skipped {
+        if all_repos_disabled {
+            Some("All repositories opted out of this check via configuration.")
+        } else if plan_free && private_repos_in_scope > 0 && repo_skipped > 0 {
+            // The dedicated plan-gated note will explain this — don't duplicate.
+            None
+        } else if let Some(pred) = check.applies_to_repo
+            && repo_applicable == 0
+        {
+            if pred as usize == crate::checks::public_only as usize
+                && private_repos_filtered_out > 0
+            {
+                // The plan-excluded note rendered elsewhere will surface this.
+                None
+            } else if pred as usize == crate::checks::public_only as usize {
+                Some(
+                    "No public repositories in scope — this check only applies to public repositories.",
+                )
+            } else {
+                Some("No applicable repositories in scope for this check.")
+            }
+        } else if check.repo_eval.is_some() && repo_applicable == 0 {
+            Some("No repositories in scope to evaluate.")
+        } else if check.repo_eval.is_some()
+            && repo_skipped == repo_applicable
+            && repo_applicable > 0
+        {
+            Some(
+                "None of the repositories in scope had the data required for this check (for example, no workflows or no relevant configuration to evaluate).",
+            )
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     CheckResult {
         check,
         status,
@@ -921,6 +971,8 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         org_only_issue,
         private_repos_excluded_by_plan,
         private_repos_in_scope,
+        private_repos_filtered_out,
+        skip_reason,
     }
 }
 
@@ -996,7 +1048,7 @@ pub fn render_posture_panel(results: &[CheckResult]) {
     panel::blank();
 
     let warned_label = crate::checks::common::noun(warned, "warning", "warnings");
-    let critical_label = crate::checks::common::noun(failed, "critical", "critical");
+    let critical_label = crate::checks::common::noun(failed, "fail", "fails");
     let counts = panel::Line::new()
         .space(3)
         .styled("✓", panel::success_bold)
@@ -1064,7 +1116,7 @@ pub fn render_checks_panel(
         type Renderer = fn(&str) -> String;
         let (severity, sev_render, badge_glyph, badge_render): (&str, Renderer, &str, Renderer) =
             match r.status {
-                Status::Fail => ("CRITICAL", panel::danger_bold, "✕", panel::danger_bold),
+                Status::Fail => ("FAIL", panel::danger_bold, "✕", panel::danger_bold),
                 Status::Warn => ("WARNING", panel::warning_bold, "!", panel::warning_bold),
                 Status::Pass => ("PASS", panel::success_bold, "✓", panel::success_bold),
                 Status::Skipped => ("SKIPPED", panel::muted, "—", panel::muted),
@@ -1139,6 +1191,20 @@ pub fn render_checks_panel(
             panel::blank();
         }
 
+        if r.status == Status::Skipped
+            && let Some(reason) = r.skip_reason
+        {
+            let reason_header = panel::Line::new()
+                .space(5)
+                .styled("Reason:", panel::text_bold);
+            panel::row(reason_header);
+            for line in panel::wrap(reason, text_width) {
+                let l = panel::Line::new().space(5).styled(&line, panel::muted);
+                panel::row(l);
+            }
+            panel::blank();
+        }
+
         let why = if r.org_only_issue {
             "Every new repository inherits the organization's defaults; without this control set at the org level, the next repo someone creates lands unprotected and stays that way until somebody toggles it by hand.".to_string()
         } else {
@@ -1200,7 +1266,9 @@ pub fn render_checks_panel(
             }
         }
 
-        if let Some(o) = org {
+        if let Some(o) = org
+            && r.status != Status::Skipped
+        {
             match r.check.id {
                 "repositories_have_no_direct_collaborators" => {
                     render_member_block(
@@ -1217,21 +1285,29 @@ pub fn render_checks_panel(
             }
         }
 
-        if plan_free && r.private_repos_excluded_by_plan > 0 {
+        let plan_excluded_count = if plan_free {
+            r.private_repos_excluded_by_plan + r.private_repos_filtered_out
+        } else {
+            r.private_repos_excluded_by_plan
+        };
+        if plan_excluded_count > 0 && (plan_free || r.private_repos_excluded_by_plan > 0) {
             if is_finding {
                 panel::blank();
             }
             let note = format!(
                 "{} private repositories were excluded due to the organization being on GitHub's Free plan or equivalent.",
-                r.private_repos_excluded_by_plan,
+                plan_excluded_count,
             );
             for line in panel::wrap(&note, text_width.saturating_sub(2)) {
                 let l = panel::Line::new().space(5).styled(&line, panel::muted);
                 panel::row(l);
             }
         } else if r.status == Status::Skipped && plan_free && r.private_repos_in_scope > 0 {
-            let note = "This check was skipped because it requires a paid GitHub plan (Pro, Team, or Enterprise) to evaluate on private repositories.";
-            for line in panel::wrap(note, text_width.saturating_sub(2)) {
+            let note = format!(
+                "{} private repositories were excluded due to the organization being on GitHub's Free plan or equivalent.",
+                r.private_repos_in_scope,
+            );
+            for line in panel::wrap(&note, text_width.saturating_sub(2)) {
                 let l = panel::Line::new().space(5).styled(&line, panel::muted);
                 panel::row(l);
             }
