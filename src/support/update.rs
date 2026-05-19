@@ -86,9 +86,10 @@ fn parse_version(s: &str) -> (u32, u32, u32) {
     )
 }
 
-/// Perform an explicit self-update. Returns `true` if the on-disk binary was
-/// actually replaced. Only invoked when the user passes `--self-update`.
-pub fn run_self_update() -> bool {
+/// Perform an explicit self-update. Returns `Some(version)` if the on-disk
+/// binary was actually replaced, `None` otherwise. Only invoked when the user
+/// passes `--self-update`.
+pub fn run_self_update() -> Option<String> {
     let current = env!("CARGO_PKG_VERSION");
 
     let mut builder = self_update::backends::github::Update::configure();
@@ -106,14 +107,12 @@ pub fn run_self_update() -> bool {
         builder.auth_token(&token);
     }
 
-    let Ok(updater) = builder.build() else {
-        return false;
-    };
-    match updater.update() {
-        Ok(status) => {
-            write_cache(status.version());
-            status.updated()
-        }
-        Err(_) => false,
+    let updater = builder.build().ok()?;
+    let status = updater.update().ok()?;
+    write_cache(status.version());
+    if status.updated() {
+        Some(status.version().to_string())
+    } else {
+        None
     }
 }

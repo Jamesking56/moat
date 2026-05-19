@@ -146,7 +146,7 @@ impl BranchProtections {
         } else if any_pass {
             CheckOutcome::pass("✓")
         } else if any_plan_gated {
-            CheckOutcome::skipped("N/a (plan)")
+            CheckOutcome::skipped("N/A (plan)")
         } else {
             CheckOutcome::pass("✓")
         }

@@ -192,7 +192,7 @@ impl Report {
 fn status_label(s: Status) -> &'static str {
     match s {
         Status::Pass => "✓ pass",
-        Status::Fail => "✗ fail",
+        Status::Fail => "✕ fail",
         Status::Warn => "! warn",
         Status::Skipped => "· skipped",
     }
@@ -221,6 +221,8 @@ mod tests {
                 affected_repo_release_branches: vec![vec![], vec!["release/1.0".into()]],
                 org_default_issue: false,
                 org_only_issue: false,
+                private_repos_excluded_by_plan: 0,
+                private_repos_in_scope: 0,
             },
             CheckResult {
                 check,
@@ -232,6 +234,8 @@ mod tests {
                 affected_repo_release_branches: vec![],
                 org_default_issue: false,
                 org_only_issue: false,
+                private_repos_excluded_by_plan: 0,
+                private_repos_in_scope: 0,
             },
         ]
     }

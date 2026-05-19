@@ -26,7 +26,7 @@ pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
         CheckOutcome::pass("Required by an org-level ruleset")
     } else {
         CheckOutcome::fail(
-            "required by an org-level ruleset, but some sub-requirements are missing",
+            "Required by an org-level ruleset, but some sub-requirements are missing",
         )
         .with_items(missing.into_iter().map(String::from).collect())
     }

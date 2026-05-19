@@ -48,11 +48,11 @@ async fn run() -> Result<i32> {
     if cli.self_update {
         let updated = tokio::task::spawn_blocking(support::update::run_self_update)
             .await
-            .unwrap_or(false);
-        let body = if updated {
-            "moat was updated to the latest released version.".to_string()
-        } else {
-            "moat is already up to date.".to_string()
+            .ok()
+            .flatten();
+        let body = match updated {
+            Some(v) => format!("Moat updated to v{}.", v.trim_start_matches('v')),
+            None => "Moat is already up to date.".to_string(),
         };
         runner::render_info_panel("Self-update", &[body]);
         return Ok(0);
@@ -92,7 +92,7 @@ async fn run() -> Result<i32> {
 
     if let Some((owner, repo)) = account.split_once('/') {
         if owner.is_empty() || repo.is_empty() || repo.contains('/') {
-            anyhow::bail!("Invalid target `{account}` — expected `owner/repo` or `account`");
+            anyhow::bail!("Invalid target `{account}` — expected `owner/repo` or `account`.");
         }
         let listing = runner::ensure_viewer_can_audit_repo(&client, owner, repo).await?;
         runner::verify_token_for_target(

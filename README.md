@@ -57,10 +57,11 @@ moat <owner>/<repo>
 
 For organization audits the token needs:
 
-- `read:org` — list members, admins, outside collaborators, 2FA enforcement
-- `repo` — read branch protection, required reviews, secret scanning, Dependabot alerts, workflow files, repository contents (`SECURITY.md`), and repository webhooks
+- `admin:org` — list members, admins, outside collaborators, 2FA enforcement, and read org-level Actions policies
+- `repo` — read branch protection, required reviews, secret scanning, Dependabot alerts, repository contents (`SECURITY.md`), and repository webhooks
+- `workflow` — read `.github/workflows/*` files to detect unpinned actions, `pull_request_target` misuse, and overly permissive `permissions:` blocks
 
-A classic PAT or a fine-grained token with the equivalent permissions both work. For user accounts (no org scope), only repo read access is required.
+A classic PAT with these scopes works. For user accounts, only `repo` and `workflow` are required.
 
 ## Checks
 
@@ -180,7 +181,7 @@ release_branches = ["0.x", "1.x"]
 
 ## Checks skipped on GitHub Free
 
-- **GitHub Free plan on private repos.** Several checks rely on features that aren't available on Free for private repositories, so they skip with `N/a (plan)`:
+- **GitHub Free plan on private repos.** Several checks rely on features that aren't available on Free for private repositories, so they skip with `N/A (plan)`:
   - `repositories_commits_are_signed`
   - `repositories_pull_requests_require_reviews`
   - `repositories_branch_protection_applies_to_admins`

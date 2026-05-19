@@ -4,7 +4,7 @@ use crate::checks::org_context::{FeatureDefaultState, OrgContext};
 use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "Repositories dependabot alerts are enabled";
+pub const LABEL: &str = "Repositories Dependabot alerts are enabled";
 pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/security_products > Advanced Security > (*Click* -> Set up or *Edit* -> Existing one) > *Click* -> Custom configuration > Dependency scanning > Dependabot alerts > *Select* -> Enabled > *Click* -> Save/Update configuration > *Click* -> Pencil to edit configuration > Edit configuration > *Select* -> Apply to: All repositories > *Select* -> Default for new repositories: All > *Click* -> Review > *Click* -> Save and enable";
 pub const WHY_ENABLE: &str = "Most package compromises are disclosed publicly before they are widely exploited; alerts tell you which of your repositories consume the bad version so you can pin or patch within the window before mass scanning catches up.";
 
@@ -21,7 +21,7 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
         .org
         .map(|o| !matches!(o.dependabot_alerts_default, FeatureDefaultState::Enabled));
     feature_state_phrase(
-        "dependabot alerts",
+        "Dependabot alerts",
         ctx.repos,
         |r| r.dependabot_alerts,
         org_off,

@@ -43,7 +43,7 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
 
     let org_phrase: Option<String> = org_outside.map(|n| {
         if n == 0 {
-            "no outside collaborators on the organization".into()
+            "the organization has no outside collaborators".into()
         } else {
             format!(
                 "{n} outside {} have access to private or elevated repositories",
@@ -56,7 +56,7 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
         None
     } else if bad_repos == 0 {
         Some(format!(
-            "no direct collaborators across {total} {}",
+            "all {total} {} are free of direct collaborators",
             repos_word(total)
         ))
     } else {
@@ -68,7 +68,7 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
     };
 
     match (org_phrase, repo_phrase) {
-        (Some(o), Some(r)) => Some(format!("{o}; {r}")),
+        (Some(o), Some(r)) => Some(format!("{o}, and {r}")),
         (Some(o), None) => Some(o),
         (None, Some(r)) => Some(r),
         (None, None) => None,

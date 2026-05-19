@@ -46,7 +46,7 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
         return CheckOutcome::skipped("—");
     }
     if !ctx.workflows.has_any_workflows() {
-        return CheckOutcome::skipped("N/a");
+        return CheckOutcome::skipped("N/A");
     }
 
     let multi = ctx.workflows.len() > 1;

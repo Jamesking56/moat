@@ -72,7 +72,7 @@ impl Status {
     pub fn badge(self) -> &'static str {
         match self {
             Status::Pass => "✓",
-            Status::Fail => "✗",
+            Status::Fail => "✕",
             Status::Warn => "!",
             Status::Skipped => "·",
         }
@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn badge_is_distinct_per_status() {
         assert_eq!(Status::Pass.badge(), "✓");
-        assert_eq!(Status::Fail.badge(), "✗");
+        assert_eq!(Status::Fail.badge(), "✕");
         assert_eq!(Status::Warn.badge(), "!");
         assert_eq!(Status::Skipped.badge(), "·");
     }
@@ -124,6 +124,6 @@ mod tests {
     #[test]
     fn colored_badge_contains_glyph() {
         assert!(Status::Pass.colored_badge().contains('✓'));
-        assert!(Status::Fail.colored_badge().contains('✗'));
+        assert!(Status::Fail.colored_badge().contains('✕'));
     }
 }

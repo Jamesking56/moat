@@ -28,7 +28,7 @@ fn evaluate(state: ForkPrContributorApprovalState) -> CheckOutcome {
             CheckOutcome::fail("Required only for first-time contributors new to GitHub")
         }
         ForkPrContributorApprovalState::Other => CheckOutcome::fail("Not enabled"),
-        ForkPrContributorApprovalState::PlanGated => CheckOutcome::skipped("N/a (plan)"),
+        ForkPrContributorApprovalState::PlanGated => CheckOutcome::skipped("N/A (plan)"),
     }
 }
 

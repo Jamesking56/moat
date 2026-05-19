@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::{StatusCode, header};
 use serde::de::DeserializeOwned;
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const USER_AGENT: &str = concat!("moat/", env!("CARGO_PKG_VERSION"));
 pub const DEFAULT_API: &str = "https://api.github.com";
@@ -75,6 +76,108 @@ pub struct Preflight {
     /// True when GitHub returned 401 Unauthorized for `GET /user`. The runner
     /// formats a source-aware error so the user knows which token was rejected.
     pub rejected: bool,
+}
+
+/// If the response looks like a GitHub rate-limit (primary or secondary),
+/// return a formatted multi-line error explaining when to retry. Returns
+/// `None` for normal permission failures so callers fall through to their
+/// existing 403 handling.
+fn rate_limit_error(
+    status: StatusCode,
+    headers: &header::HeaderMap,
+    body: &str,
+) -> Option<anyhow::Error> {
+    let remaining_zero = headers
+        .get("x-ratelimit-remaining")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<i64>().ok())
+        == Some(0);
+    let body_lc = body.to_ascii_lowercase();
+    let body_mentions_rate_limit = body_lc.contains("rate limit")
+        || body_lc.contains("secondary rate limit")
+        || body_lc.contains("abuse detection");
+
+    let is_429 = status == StatusCode::TOO_MANY_REQUESTS;
+    let is_403_rate_limited = status == StatusCode::FORBIDDEN
+        && (remaining_zero || body_mentions_rate_limit);
+
+    if !is_429 && !is_403_rate_limited {
+        return None;
+    }
+
+    let kind = if remaining_zero {
+        "primary"
+    } else {
+        "secondary"
+    };
+
+    let retry_in_secs = retry_after_seconds(headers);
+    let when = retry_in_secs
+        .map(format_retry_hint)
+        .unwrap_or_else(|| "in a few minutes".to_string());
+
+    let mut msg = format!(
+        "GitHub API rate limit reached ({kind}). Try again {when}."
+    );
+    if kind == "primary" {
+        msg.push_str(
+            "\n\nAuthenticated requests get 5,000/hour. To raise this, run moat \
+             against fewer repos at once, or use a token tied to a GitHub App \
+             installation (15,000/hour).",
+        );
+    } else {
+        msg.push_str(
+            "\n\nGitHub throttles bursts of concurrent requests. Wait for the \
+             window above to pass and re-run moat.",
+        );
+    }
+    Some(anyhow!(msg))
+}
+
+/// Seconds until the user can retry, derived from `Retry-After` (secondary
+/// rate limits) or `X-RateLimit-Reset` (primary rate limits, unix epoch).
+fn retry_after_seconds(headers: &header::HeaderMap) -> Option<i64> {
+    if let Some(v) = headers.get("retry-after").and_then(|v| v.to_str().ok())
+        && let Ok(secs) = v.trim().parse::<i64>()
+    {
+        return Some(secs.max(0));
+    }
+    if let Some(reset) = headers
+        .get("x-ratelimit-reset")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<i64>().ok())
+    {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        return Some((reset - now).max(0));
+    }
+    None
+}
+
+fn format_retry_hint(secs: i64) -> String {
+    if secs <= 0 {
+        return "now (please retry)".to_string();
+    }
+    if secs < 60 {
+        return format!("in {secs} second{}", if secs == 1 { "" } else { "s" });
+    }
+    let mins = (secs + 59) / 60;
+    if mins < 60 {
+        return format!("in {mins} minute{}", if mins == 1 { "" } else { "s" });
+    }
+    let hours = mins / 60;
+    let rem = mins % 60;
+    if rem == 0 {
+        format!("in {hours} hour{}", if hours == 1 { "" } else { "s" })
+    } else {
+        format!(
+            "in {hours} hour{} {rem} minute{}",
+            if hours == 1 { "" } else { "s" },
+            if rem == 1 { "" } else { "s" }
+        )
+    }
 }
 
 fn sso_url_from(headers: &header::HeaderMap) -> Option<String> {
@@ -225,11 +328,25 @@ impl HttpGitHubClient {
     pub async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<Fetch<T>> {
         let url = self.url(path);
         let resp = self.http.get(&url).send().await?;
-        match resp.status() {
+        let status = resp.status();
+        match status {
             StatusCode::OK => Ok(Fetch::Ok(resp.json().await?)),
             StatusCode::NO_CONTENT => Err(anyhow!("expected JSON body, got 204 from {url}")),
             StatusCode::NOT_FOUND => Ok(Fetch::NotFound),
-            StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => Ok(Fetch::Forbidden),
+            StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => {
+                let headers = resp.headers().clone();
+                let body = resp.text().await.unwrap_or_default();
+                if let Some(err) = rate_limit_error(status, &headers, &body) {
+                    return Err(err);
+                }
+                Ok(Fetch::Forbidden)
+            }
+            StatusCode::TOO_MANY_REQUESTS => {
+                let headers = resp.headers().clone();
+                let body = resp.text().await.unwrap_or_default();
+                Err(rate_limit_error(status, &headers, &body)
+                    .unwrap_or_else(|| anyhow!("GET {url} -> {status}: {body}")))
+            }
             s => {
                 let body = resp.text().await.unwrap_or_default();
                 Err(anyhow!("GET {url} -> {s}: {body}"))
@@ -243,17 +360,28 @@ impl HttpGitHubClient {
     ) -> Result<Fetch403<T>> {
         let url = self.url(path);
         let resp = self.http.get(&url).send().await?;
-        match resp.status() {
+        let status = resp.status();
+        match status {
             StatusCode::OK => Ok(Fetch403::Ok(resp.json().await?)),
             StatusCode::NO_CONTENT => Err(anyhow!("expected JSON body, got 204 from {url}")),
             StatusCode::NOT_FOUND => Ok(Fetch403::NotFound),
             StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => {
+                let headers = resp.headers().clone();
                 let body = resp.text().await.unwrap_or_default();
+                if let Some(err) = rate_limit_error(status, &headers, &body) {
+                    return Err(err);
+                }
                 if body.contains("Upgrade to GitHub") {
                     Ok(Fetch403::PlanGated)
                 } else {
                     Ok(Fetch403::Forbidden)
                 }
+            }
+            StatusCode::TOO_MANY_REQUESTS => {
+                let headers = resp.headers().clone();
+                let body = resp.text().await.unwrap_or_default();
+                Err(rate_limit_error(status, &headers, &body)
+                    .unwrap_or_else(|| anyhow!("GET {url} -> {status}: {body}")))
             }
             s => {
                 let body = resp.text().await.unwrap_or_default();
@@ -270,10 +398,24 @@ impl HttpGitHubClient {
             .header(header::ACCEPT, "application/vnd.github.raw")
             .send()
             .await?;
-        match resp.status() {
+        let status = resp.status();
+        match status {
             StatusCode::OK => Ok(Fetch::Ok(resp.text().await?)),
             StatusCode::NOT_FOUND => Ok(Fetch::NotFound),
-            StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => Ok(Fetch::Forbidden),
+            StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => {
+                let headers = resp.headers().clone();
+                let body = resp.text().await.unwrap_or_default();
+                if let Some(err) = rate_limit_error(status, &headers, &body) {
+                    return Err(err);
+                }
+                Ok(Fetch::Forbidden)
+            }
+            StatusCode::TOO_MANY_REQUESTS => {
+                let headers = resp.headers().clone();
+                let body = resp.text().await.unwrap_or_default();
+                Err(rate_limit_error(status, &headers, &body)
+                    .unwrap_or_else(|| anyhow!("GET {url} -> {status}: {body}")))
+            }
             s => {
                 let body = resp.text().await.unwrap_or_default();
                 Err(anyhow!("GET {url} -> {s}: {body}"))
@@ -284,10 +426,24 @@ impl HttpGitHubClient {
     pub async fn get_presence(&self, path: &str) -> Result<Fetch<()>> {
         let url = self.url(path);
         let resp = self.http.get(&url).send().await?;
-        match resp.status() {
+        let status = resp.status();
+        match status {
             StatusCode::OK | StatusCode::NO_CONTENT => Ok(Fetch::Ok(())),
             StatusCode::NOT_FOUND => Ok(Fetch::NotFound),
-            StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => Ok(Fetch::Forbidden),
+            StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => {
+                let headers = resp.headers().clone();
+                let body = resp.text().await.unwrap_or_default();
+                if let Some(err) = rate_limit_error(status, &headers, &body) {
+                    return Err(err);
+                }
+                Ok(Fetch::Forbidden)
+            }
+            StatusCode::TOO_MANY_REQUESTS => {
+                let headers = resp.headers().clone();
+                let body = resp.text().await.unwrap_or_default();
+                Err(rate_limit_error(status, &headers, &body)
+                    .unwrap_or_else(|| anyhow!("GET {url} -> {status}: {body}")))
+            }
             s => {
                 let body = resp.text().await.unwrap_or_default();
                 Err(anyhow!("GET {url} -> {s}: {body}"))
@@ -298,16 +454,27 @@ impl HttpGitHubClient {
     pub async fn get_presence_plan_aware(&self, path: &str) -> Result<Fetch403<()>> {
         let url = self.url(path);
         let resp = self.http.get(&url).send().await?;
-        match resp.status() {
+        let status = resp.status();
+        match status {
             StatusCode::OK | StatusCode::NO_CONTENT => Ok(Fetch403::Ok(())),
             StatusCode::NOT_FOUND => Ok(Fetch403::NotFound),
             StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => {
+                let headers = resp.headers().clone();
                 let body = resp.text().await.unwrap_or_default();
+                if let Some(err) = rate_limit_error(status, &headers, &body) {
+                    return Err(err);
+                }
                 if body.contains("Upgrade to GitHub") {
                     Ok(Fetch403::PlanGated)
                 } else {
                     Ok(Fetch403::Forbidden)
                 }
+            }
+            StatusCode::TOO_MANY_REQUESTS => {
+                let headers = resp.headers().clone();
+                let body = resp.text().await.unwrap_or_default();
+                Err(rate_limit_error(status, &headers, &body)
+                    .unwrap_or_else(|| anyhow!("GET {url} -> {status}: {body}")))
             }
             s => {
                 let body = resp.text().await.unwrap_or_default();
@@ -329,11 +496,31 @@ impl HttpGitHubClient {
                 if first {
                     match status {
                         StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => {
+                            let headers = resp.headers().clone();
+                            let body = resp.text().await.unwrap_or_default();
+                            if let Some(err) = rate_limit_error(status, &headers, &body) {
+                                return Err(err);
+                            }
                             return Ok(Fetch::Forbidden);
                         }
                         StatusCode::NOT_FOUND => return Ok(Fetch::NotFound),
+                        StatusCode::TOO_MANY_REQUESTS => {
+                            let headers = resp.headers().clone();
+                            let body = resp.text().await.unwrap_or_default();
+                            return Err(rate_limit_error(status, &headers, &body)
+                                .unwrap_or_else(|| anyhow!("GET {url} -> {status}: {body}")));
+                        }
                         _ => {}
                     }
+                } else if status == StatusCode::TOO_MANY_REQUESTS
+                    || status == StatusCode::FORBIDDEN
+                {
+                    let headers = resp.headers().clone();
+                    let body = resp.text().await.unwrap_or_default();
+                    if let Some(err) = rate_limit_error(status, &headers, &body) {
+                        return Err(err);
+                    }
+                    return Err(anyhow!("GET {url} -> {status}: {body}"));
                 }
                 let body = resp.text().await.unwrap_or_default();
                 return Err(anyhow!("GET {url} -> {status}: {body}"));
@@ -363,15 +550,34 @@ impl HttpGitHubClient {
                 if first {
                     match status {
                         StatusCode::FORBIDDEN | StatusCode::UNPROCESSABLE_ENTITY => {
+                            let headers = resp.headers().clone();
                             let body = resp.text().await.unwrap_or_default();
+                            if let Some(err) = rate_limit_error(status, &headers, &body) {
+                                return Err(err);
+                            }
                             if body.contains("Upgrade to GitHub") {
                                 return Ok(Fetch403::PlanGated);
                             }
                             return Ok(Fetch403::Forbidden);
                         }
                         StatusCode::NOT_FOUND => return Ok(Fetch403::NotFound),
+                        StatusCode::TOO_MANY_REQUESTS => {
+                            let headers = resp.headers().clone();
+                            let body = resp.text().await.unwrap_or_default();
+                            return Err(rate_limit_error(status, &headers, &body)
+                                .unwrap_or_else(|| anyhow!("GET {url} -> {status}: {body}")));
+                        }
                         _ => {}
                     }
+                } else if status == StatusCode::TOO_MANY_REQUESTS
+                    || status == StatusCode::FORBIDDEN
+                {
+                    let headers = resp.headers().clone();
+                    let body = resp.text().await.unwrap_or_default();
+                    if let Some(err) = rate_limit_error(status, &headers, &body) {
+                        return Err(err);
+                    }
+                    return Err(anyhow!("GET {url} -> {status}: {body}"));
                 }
                 let body = resp.text().await.unwrap_or_default();
                 return Err(anyhow!("GET {url} -> {status}: {body}"));

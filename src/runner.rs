@@ -52,7 +52,7 @@ struct OrgMembership {
 
 fn not_admin_bail(target: &str) -> anyhow::Error {
     anyhow!(
-        "You are not an admin of `{target}`. moat requires admin access to surface the data it audits — run it on an organization or repository you administer."
+        "You are not an admin of `{target}`. Moat requires admin access to surface the data it audits — run it on an organization or repository you administer."
     )
 }
 
@@ -78,7 +78,7 @@ pub async fn ensure_viewer_can_audit_account(
             let viewer = match client.get_json::<ViewerLogin>("/user").await? {
                 Fetch::Ok(v) => v,
                 _ => bail!(
-                    "Could not read authenticated viewer (`GET /user`) — check your token scopes"
+                    "Could not read authenticated viewer (`GET /user`) — check your token scopes."
                 ),
             };
             if !viewer.login.eq_ignore_ascii_case(account) {
@@ -101,7 +101,7 @@ pub async fn ensure_viewer_can_audit_repo(
     {
         Fetch::Ok(v) => v,
         Fetch::Forbidden => return Err(not_admin_bail(&format!("{owner}/{repo}"))),
-        Fetch::NotFound => bail!("no repository named `{owner}/{repo}` was found"),
+        Fetch::NotFound => bail!("No repository named `{owner}/{repo}` was found."),
     };
     let is_admin = listing
         .permissions
@@ -113,7 +113,7 @@ pub async fn ensure_viewer_can_audit_repo(
     }
     if listing.fork {
         bail!(
-            "`{owner}/{repo}` is a fork — moat does not audit forks (their settings inherit from upstream)"
+            "`{owner}/{repo}` is a fork — Moat does not audit forks (their settings inherit from upstream)."
         );
     }
     Ok(listing)
@@ -317,9 +317,18 @@ impl AuthError {
 /// Render an arbitrary error message inside the same panel UI used for auth
 /// errors, so every fatal error the CLI prints looks consistent.
 pub fn render_generic_error(message: &str) {
+    let mut lines: Vec<AuthErrorLine> = Vec::new();
+    for raw in message.split('\n') {
+        let trimmed = raw.trim_end();
+        if trimmed.is_empty() {
+            lines.push(AuthErrorLine::Blank);
+        } else {
+            lines.push(AuthErrorLine::Text(trimmed.to_string()));
+        }
+    }
     AuthError {
         title: "Error".to_string(),
-        lines: vec![AuthErrorLine::Text(message.to_string())],
+        lines,
     }
     .render();
 }
@@ -604,11 +613,11 @@ pub async fn detect_account(client: &impl GitHubClient, name: &str) -> Result<Ac
     {
         Fetch::Ok(a) if a.kind == "Organization" => Ok(AccountKind::Organization),
         Fetch::Ok(a) if a.kind == "User" => Ok(AccountKind::User),
-        Fetch::Ok(a) => bail!("unexpected account type `{}` for `{name}`", a.kind),
+        Fetch::Ok(a) => bail!("Unexpected account type `{}` for `{name}`.", a.kind),
         Fetch::Forbidden => Err(anyhow!(
-            "No access to `{name}` — check your token scopes (`read:org` for private orgs)"
+            "No access to `{name}` — check your token scopes (`read:org` for private orgs)."
         )),
-        Fetch::NotFound => bail!("no GitHub account named `{name}` was found."),
+        Fetch::NotFound => bail!("No GitHub account named `{name}` was found."),
     }
 }
 
@@ -636,7 +645,7 @@ pub async fn list_repos(
     let listings: Vec<RepoListing> = match client.get_paginated(&listing_path).await? {
         Fetch::Ok(v) => v,
         Fetch::Forbidden => {
-            bail!("No permission to list repositories for `{account}` — check your token scopes")
+            bail!("No permission to list repositories for `{account}` — check your token scopes.")
         }
         Fetch::NotFound => Vec::new(),
     };
@@ -715,6 +724,14 @@ pub struct CheckResult {
     pub affected_repo_release_branches: Vec<Vec<String>>,
     pub org_default_issue: bool,
     pub org_only_issue: bool,
+    /// Number of private repos that the runner couldn't evaluate because the
+    /// underlying GitHub feature is gated by the org's plan (e.g. branch
+    /// protection or secret scanning on private repos under the Free plan).
+    pub private_repos_excluded_by_plan: usize,
+    /// Total private repos that were in scope for this check (i.e. not
+    /// filtered out by `applies_to_repo`). Used as the denominator when
+    /// surfacing the plan-exclusion note.
+    pub private_repos_in_scope: usize,
 }
 
 pub fn exit_code(results: &[CheckResult]) -> i32 {
@@ -756,6 +773,8 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
     let mut repo_warned = 0usize;
     let mut repo_applicable = 0usize;
     let mut repo_disabled = 0usize;
+    let mut private_repos_in_scope = 0usize;
+    let mut private_repos_excluded_by_plan = 0usize;
     let mut active_repos: Vec<&RepoContext> = Vec::new();
     if let Some(f) = check.repo_eval {
         for r in ctx.repos {
@@ -773,7 +792,13 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
             }
             active_repos.push(r);
             repo_applicable += 1;
+            if r.private {
+                private_repos_in_scope += 1;
+            }
             let outcome = f(r);
+            if r.private && outcome.status == Status::Skipped {
+                private_repos_excluded_by_plan += 1;
+            }
             match outcome.status {
                 Status::Fail => {
                     if !outcome.failing_branches.is_empty() {
@@ -888,6 +913,8 @@ fn evaluate(check: &'static Check, ctx: &CheckContext<'_>, active_total: usize) 
         affected_repo_release_branches: affected_release_branches,
         org_default_issue: org_failed || org_warned,
         org_only_issue,
+        private_repos_excluded_by_plan,
+        private_repos_in_scope,
     }
 }
 
@@ -962,6 +989,8 @@ pub fn render_posture_panel(results: &[CheckResult]) {
 
     panel::blank();
 
+    let warned_label = crate::checks::common::noun(warned, "warning", "warnings");
+    let critical_label = crate::checks::common::noun(failed, "critical", "critical");
     let counts = panel::Line::new()
         .space(3)
         .styled("✓", panel::success_bold)
@@ -970,11 +999,11 @@ pub fn render_posture_panel(results: &[CheckResult]) {
         .space(4)
         .styled("✕", panel::danger_bold)
         .space(2)
-        .styled(&format!("{failed} critical"), panel::text)
+        .styled(&format!("{failed} {critical_label}"), panel::text)
         .space(4)
         .styled("!", panel::warning_bold)
         .space(2)
-        .styled(&format!("{warned} warnings"), panel::text)
+        .styled(&format!("{warned} {warned_label}"), panel::text)
         .space(4)
         .styled("—", panel::muted)
         .space(2)
@@ -1109,6 +1138,8 @@ pub fn render_checks_panel(
         } else {
             r.check.why_enable.replace("→", "›")
         };
+        let why_header = panel::Line::new().space(5).styled("Why:", panel::text_bold);
+        panel::row(why_header);
         for line in panel::wrap(&why, text_width) {
             let l = panel::Line::new().space(5).styled(&line, panel::muted);
             panel::row(l);
@@ -1170,6 +1201,18 @@ pub fn render_checks_panel(
             }
         }
 
+        if plan_free && r.private_repos_excluded_by_plan > 0 {
+            panel::blank();
+            let note = format!(
+                "{} private repositories were excluded due to the organization being on GitHub's Free plan or equivalent.",
+                r.private_repos_excluded_by_plan,
+            );
+            for line in panel::wrap(&note, text_width.saturating_sub(2)) {
+                let l = panel::Line::new().space(5).styled(&line, panel::muted);
+                panel::row(l);
+            }
+        }
+
         if is_finding && !r.affected_repos.is_empty() {
             panel::blank();
             let total = r.affected_repos.len();
@@ -1217,7 +1260,7 @@ pub fn render_checks_panel(
                 panel::row(line);
             }
             if show < total {
-                let more = format!("+{} more · --verbose to list", total - show);
+                let more = format!("+{} more · run with --verbose to list", total - show);
                 let line = panel::Line::new().space(5).styled(&more, panel::muted);
                 panel::row(line);
             }
@@ -1252,7 +1295,7 @@ fn render_member_block(title: &str, list: &[String], text_width: usize, verbose:
             preview.join("  ")
         } else {
             format!(
-                "{}  +{} more · --verbose to list",
+                "{}  +{} more · run with --verbose to list",
                 preview[..5].join("  "),
                 preview.len() - 5
             )

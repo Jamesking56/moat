@@ -14,7 +14,7 @@ pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
         ReleaseImmutabilityState::Selected => {
             CheckOutcome::warn("Enforced on selected repositories only")
         }
-        ReleaseImmutabilityState::None => CheckOutcome::fail("Not enforced"),
+        ReleaseImmutabilityState::None => CheckOutcome::fail("Not enforced on any repository"),
     }
 }
 
@@ -22,7 +22,7 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     match ctx.release_immutability {
         ReleaseImmutabilityRepoState::Enabled => CheckOutcome::pass("✓"),
         ReleaseImmutabilityRepoState::Disabled => CheckOutcome::fail("✗"),
-        ReleaseImmutabilityRepoState::PlanGated => CheckOutcome::skipped("N/a (plan)"),
+        ReleaseImmutabilityRepoState::PlanGated => CheckOutcome::skipped("N/A (plan)"),
     }
 }
 

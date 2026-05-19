@@ -35,11 +35,11 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     }
 
     if !has_workflows {
-        return CheckOutcome::skipped("N/a (no workflows)");
+        return CheckOutcome::skipped("N/A (no workflows)");
     }
 
     if enforced && unpinned.is_empty() {
-        return CheckOutcome::pass("✓ enforced via repo setting");
+        return CheckOutcome::pass("✓");
     }
 
     if not_enforced || !unpinned.is_empty() {
@@ -52,20 +52,14 @@ pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
         }
         items.extend(unpinned.iter().cloned());
 
-        let summary = match (not_enforced, unpinned.len()) {
-            (true, 0) if has_workflows => "✗ all pinned, but enforcement off".to_string(),
-            (true, 0) => "✗ enforcement off".to_string(),
-            (true, n) => format!("✗ {n} unpinned + enforcement off"),
-            (false, n) => format!("✗ {n} unpinned"),
-        };
-        let mut outcome = CheckOutcome::fail(summary).with_items(items);
+        let mut outcome = CheckOutcome::fail("✗").with_items(items);
         if !failing_branches.is_empty() {
             outcome = outcome.with_failing_branches(failing_branches);
         }
         return outcome;
     }
 
-    CheckOutcome::pass("✓ all pinned (enforcement unknown)")
+    CheckOutcome::pass("✓")
 }
 
 pub fn description(ctx: StateCtx<'_>) -> Option<String> {

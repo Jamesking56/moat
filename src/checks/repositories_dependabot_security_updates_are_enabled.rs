@@ -4,7 +4,7 @@ use crate::checks::org_context::{FeatureDefaultState, OrgContext};
 use crate::checks::repo_context::RepoContext;
 use crate::support::outcome::CheckOutcome;
 
-pub const LABEL: &str = "Repositories dependabot security updates are enabled";
+pub const LABEL: &str = "Repositories Dependabot security updates are enabled";
 pub const HOW_TO_FIX: &str = "https://github.com/organizations/{org}/settings/security_products > Advanced Security > (*Click* -> Set up or *Edit* -> Existing one) > *Click* -> Custom configuration > Dependency scanning > Dependabot alerts > Security updates > *Select* -> Enabled > *Click* -> Save/Update configuration > *Click* -> Pencil to edit configuration > Edit configuration > *Select* -> Apply to: All repositories > *Select* -> Default for new repositories: All > *Click* -> Review > *Click* -> Save and enable";
 pub const WHY_ENABLE: &str = "Alerts only tell you a vulnerable dependency is in use; security updates are what actually open the PR that bumps it. Without them, an alert sits in the dashboard until someone notices, and the window before mass scanning catches up is exactly the window you wanted to close.";
 
@@ -24,7 +24,7 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
         )
     });
     feature_state_phrase(
-        "dependabot security updates",
+        "Dependabot security updates",
         ctx.repos,
         |r| r.dependabot_security_updates,
         org_off,

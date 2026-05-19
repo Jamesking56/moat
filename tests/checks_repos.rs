@@ -228,7 +228,7 @@ fn dependabot_config_description_counts_only_repos_with_workflows() {
         repos: &repos,
     });
 
-    assert_eq!(note, Some("1/1 repository lack a dependabot config".into()));
+    assert_eq!(note, Some("1/1 repository lack a Dependabot config".into()));
 }
 
 #[test]
@@ -563,7 +563,8 @@ fn pinned_actions_enforced_still_flags_unpinned_refs() {
     )]);
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert!(o.summary.to_ascii_lowercase().contains("unpinned"));
+    assert_eq!(o.summary, "✗");
+    assert!(o.items.iter().any(|i| i.contains("unpinned")));
 }
 
 #[test]
@@ -576,7 +577,7 @@ fn pinned_actions_not_enforced_with_all_pinned_and_workflows_reports_enforcement
     )]);
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert_eq!(o.summary, "✗ all pinned, but enforcement off");
+    assert_eq!(o.summary, "✗");
     assert_eq!(o.items.len(), 1);
 }
 
@@ -599,7 +600,7 @@ fn pinned_actions_not_enforced_with_unpinned_reports_combined_summary() {
     )]);
     let o = pinned_actions::repo_check(&c);
     assert_eq!(o.status, Status::Fail);
-    assert_eq!(o.summary, "✗ 2 unpinned + enforcement off");
+    assert_eq!(o.summary, "✗");
 }
 
 #[test]

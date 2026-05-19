@@ -2,13 +2,13 @@ use crate::checks::StateCtx;
 use crate::checks::common::repos_word;
 use crate::checks::repo_context::{DependabotConfigState, RepoContext};
 use crate::support::outcome::CheckOutcome;
-pub const LABEL: &str = "Repositories have dependabot config";
+pub const LABEL: &str = "Repositories have Dependabot config";
 pub const HOW_TO_FIX: &str = "In each affected repository below > *Add* -> `.github/dependabot.yml` > *Enable* -> The `github-actions` ecosystem with the following content:\n```yaml\nversion: 2\nupdates:\n  - package-ecosystem: github-actions\n    directory: /\n    schedule:\n      interval: weekly\n```";
 pub const WHY_ENABLE: &str = "Pinning actions to SHAs is only safe if something keeps them up to date; without Dependabot the pins rot and either get bumped to a tag (defeating the pin) or stay stuck on a known-vulnerable revision.";
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     if !ctx.workflows.has_any_workflows() {
-        return CheckOutcome::skipped("N/a");
+        return CheckOutcome::skipped("N/A");
     }
 
     match &ctx.dependabot_config {
@@ -46,22 +46,22 @@ pub fn description(ctx: StateCtx<'_>) -> Option<String> {
     let bad = missing + without_actions;
     Some(if bad == 0 {
         format!(
-            "all {applicable} {} with workflows track action updates via dependabot",
+            "all {applicable} {} with workflows track action updates via Dependabot",
             repos_word(applicable)
         )
     } else if missing > 0 && without_actions > 0 {
         format!(
-            "{missing}/{applicable} {} lack a dependabot config and {without_actions} more do not track the github-actions ecosystem",
+            "{missing}/{applicable} {} lack a Dependabot config and {without_actions} more do not track the github-actions ecosystem",
             repos_word(applicable)
         )
     } else if missing > 0 {
         format!(
-            "{missing}/{applicable} {} lack a dependabot config",
+            "{missing}/{applicable} {} lack a Dependabot config",
             repos_word(applicable)
         )
     } else {
         format!(
-            "{without_actions}/{applicable} {} do not track the github-actions ecosystem in dependabot",
+            "{without_actions}/{applicable} {} do not track the github-actions ecosystem in Dependabot",
             repos_word(applicable)
         )
     })

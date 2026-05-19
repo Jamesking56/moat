@@ -18,6 +18,8 @@ fn result_with(status: Status) -> CheckResult {
         affected_repo_release_branches: Vec::new(),
         org_default_issue: false,
         org_only_issue: false,
+        private_repos_excluded_by_plan: 0,
+        private_repos_in_scope: 0,
     }
 }
 

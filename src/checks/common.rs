@@ -213,7 +213,7 @@ impl FeatureState {
         match self {
             FeatureState::Enabled => CheckOutcome::pass("✓"),
             FeatureState::Disabled => CheckOutcome::fail("✗"),
-            FeatureState::PlanGated => CheckOutcome::skipped("N/a (plan)"),
+            FeatureState::PlanGated => CheckOutcome::skipped("N/A (plan)"),
         }
     }
 }

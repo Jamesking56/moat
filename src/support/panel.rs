@@ -41,9 +41,11 @@ pub fn progress(_msg: &str) {
     }
     let total = s.total.load(Ordering::Relaxed);
     let right = if total > 0 {
-        format!("{}/{} checks", done.min(total), total)
+        let word = if total == 1 { "check" } else { "checks" };
+        format!("{}/{} {word}", done.min(total), total)
     } else {
-        format!("{done} checks")
+        let word = if done == 1 { "check" } else { "checks" };
+        format!("{done} {word}")
     };
     rewrite_header_right(s, &right);
 }
@@ -54,7 +56,8 @@ pub fn bump_progress_total(extra: usize) {
         let total = s.total.fetch_add(extra, Ordering::Relaxed) + extra;
         if s.tty {
             let done = s.done.load(Ordering::Relaxed);
-            let right = format!("{}/{} checks", done.min(total), total);
+            let word = if total == 1 { "check" } else { "checks" };
+            let right = format!("{}/{} {word}", done.min(total), total);
             rewrite_header_right(s, &right);
         }
     }

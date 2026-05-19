@@ -19,8 +19,8 @@ pub fn org_check(ctx: &OrgContext) -> CheckOutcome {
 
 pub fn repo_check(ctx: &RepoContext) -> CheckOutcome {
     match ctx.workflow_token {
-        WorkflowTokenState::Read => CheckOutcome::pass("Read"),
-        WorkflowTokenState::Write => CheckOutcome::fail("Write"),
+        WorkflowTokenState::Read => CheckOutcome::pass("✓"),
+        WorkflowTokenState::Write => CheckOutcome::fail("✗"),
     }
 }
 
