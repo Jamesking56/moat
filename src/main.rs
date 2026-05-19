@@ -41,7 +41,7 @@ async fn run() -> Result<i32> {
     }
 
     if cli.version {
-        runner::render_info_panel("Version", &[format!("moat v{}", env!("CARGO_PKG_VERSION"))]);
+        runner::render_info_panel("Version", &[format!("Moat v{}", env!("CARGO_PKG_VERSION"))]);
         return Ok(0);
     }
 

@@ -26,7 +26,7 @@ struct AccountType {
 
 pub fn print_repo_header(owner: &str, repo: &str, outdated_note: Option<&str>) {
     let left = format!("{owner}/{repo}");
-    let brand = format!("moat v{}", env!("CARGO_PKG_VERSION"));
+    let brand = format!("Moat v{}", env!("CARGO_PKG_VERSION"));
     panel::header_panel("◈", &brand, outdated_note, &left, "Repository");
 }
 
@@ -35,7 +35,7 @@ pub fn print_header(account: &str, kind: AccountKind, outdated_note: Option<&str
         AccountKind::Organization => "Organization",
         AccountKind::User => "User",
     };
-    let brand = format!("moat v{}", env!("CARGO_PKG_VERSION"));
+    let brand = format!("Moat v{}", env!("CARGO_PKG_VERSION"));
     panel::header_panel("◈", &brand, outdated_note, account, kind_long);
 }
 
@@ -472,7 +472,7 @@ pub fn format_missing_scopes_error(
                 "Revoke it later: run `gh auth logout` + revoke GitHub CLI from https://github.com/settings/applications".to_string(),
             ));
             lines.push(AuthErrorLine::Blank);
-            lines.push(AuthErrorLine::Muted("Then re-run moat.".to_string()));
+            lines.push(AuthErrorLine::Muted("Then re-run Moat.".to_string()));
         }
         AuthSource::GithubTokenEnv | AuthSource::GhTokenEnv => {
             lines.push(AuthErrorLine::Bold("How to fix:".to_string()));
@@ -493,7 +493,7 @@ pub fn format_missing_scopes_error(
             ));
             lines.push(AuthErrorLine::Code(format!("unset {source}")));
             lines.push(AuthErrorLine::Muted(
-                "(moat will fall back to your gh session)".to_string(),
+                "(Moat will fall back to your gh session)".to_string(),
             ));
         }
     }
@@ -516,7 +516,7 @@ pub fn format_sso_error(source: AuthSource, account: &str, url: &str) -> AuthErr
             AuthErrorLine::Bold("Authorize it here:".to_string()),
             AuthErrorLine::Code(url.to_string()),
             AuthErrorLine::Blank,
-            AuthErrorLine::Muted("Then re-run moat.".to_string()),
+            AuthErrorLine::Muted("Then re-run Moat.".to_string()),
         ],
     }
 }
@@ -528,7 +528,7 @@ pub fn format_no_token_error(detail: &str) -> AuthError {
         title: "Authentication failed — no GitHub token available".to_string(),
         lines: vec![
             AuthErrorLine::Text(
-                "moat needs a GitHub token with the `admin:org`, `repo`, and `workflow` scopes, but none was found."
+                "Moat needs a GitHub token with the `admin:org`, `repo`, and `workflow` scopes, but none was found."
                     .to_string(),
             ),
             AuthErrorLine::Muted(format!("(detail: {detail})")),
@@ -547,7 +547,7 @@ pub fn format_no_token_error(detail: &str) -> AuthError {
             ),
             AuthErrorLine::Code("export GITHUB_TOKEN=<your-token>".to_string()),
             AuthErrorLine::Blank,
-            AuthErrorLine::Muted("Then re-run moat.".to_string()),
+            AuthErrorLine::Muted("Then re-run Moat.".to_string()),
         ],
     }
 }
@@ -586,7 +586,7 @@ pub fn format_unauthorized_error(source: AuthSource) -> AuthError {
                 "Tick these scopes: admin:org, repo, workflow".to_string(),
             ));
             lines.push(AuthErrorLine::MutedIndented(
-                "(fine-grained PATs are not supported — moat needs org-level access)".to_string(),
+                "(fine-grained PATs are not supported — Moat needs org-level access)".to_string(),
             ));
             lines.push(AuthErrorLine::Code(format!("export {source}=<new-token>")));
             lines.push(AuthErrorLine::Blank);
@@ -599,7 +599,7 @@ pub fn format_unauthorized_error(source: AuthSource) -> AuthError {
         }
     }
     lines.push(AuthErrorLine::Blank);
-    lines.push(AuthErrorLine::Muted("Then re-run moat.".to_string()));
+    lines.push(AuthErrorLine::Muted("Then re-run Moat.".to_string()));
     AuthError {
         title: "Authentication failed — token rejected".to_string(),
         lines,

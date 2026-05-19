@@ -254,7 +254,7 @@ impl RepoContext {
         // evaluate them in isolation.
         if repo.fork {
             return Err(anyhow::anyhow!(
-                "`{org}/{}` is a fork — moat does not audit forks (their settings inherit from upstream)",
+                "`{org}/{}` is a fork — Moat does not audit forks (their settings inherit from upstream)",
                 repo.name
             ));
         }
