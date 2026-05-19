@@ -1202,12 +1202,20 @@ pub fn render_checks_panel(
         }
 
         if plan_free && r.private_repos_excluded_by_plan > 0 {
-            panel::blank();
+            if is_finding {
+                panel::blank();
+            }
             let note = format!(
                 "{} private repositories were excluded due to the organization being on GitHub's Free plan or equivalent.",
                 r.private_repos_excluded_by_plan,
             );
             for line in panel::wrap(&note, text_width.saturating_sub(2)) {
+                let l = panel::Line::new().space(5).styled(&line, panel::muted);
+                panel::row(l);
+            }
+        } else if r.status == Status::Skipped {
+            let note = "This check was skipped because it requires a paid GitHub plan (Pro, Team, or Enterprise) to evaluate on private repositories.";
+            for line in panel::wrap(note, text_width.saturating_sub(2)) {
                 let l = panel::Line::new().space(5).styled(&line, panel::muted);
                 panel::row(l);
             }
