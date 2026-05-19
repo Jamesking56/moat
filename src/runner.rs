@@ -1151,7 +1151,10 @@ pub fn render_checks_panel(
         let plan_free = org
             .map(|o| o.plan == crate::checks::org_context::OrgPlan::Free)
             .unwrap_or(false);
-        let rules_link = is_finding && r.check.ruleset_based && plan_free;
+        // User accounts have no org-level rulesets URL, so per-repo links are
+        // the only actionable target — treat them like Free-plan orgs.
+        let user_account = org.is_none();
+        let rules_link = is_finding && r.check.ruleset_based && (plan_free || user_account);
 
         if is_finding {
             let header = "How to fix:";
@@ -1169,7 +1172,14 @@ pub fn render_checks_panel(
             let mut fix_text =
                 substitute_fix_template(r.check.how_to_fix, account, repo, &branches);
             if rules_link {
-                fix_text = rewrite_fix_for_free_plan(&fix_text, account);
+                let distinct: std::collections::HashSet<&str> =
+                    r.affected_repos.iter().map(|s| s.as_str()).collect();
+                let single = if distinct.len() == 1 {
+                    r.affected_repos.first().map(|s| s.as_str())
+                } else {
+                    None
+                };
+                fix_text = rewrite_fix_for_free_plan(&fix_text, account, single);
             }
             let hyperlinks = std::io::IsTerminal::is_terminal(&std::io::stdout());
             render_fix_block(&fix_text, text_width.saturating_sub(2), hyperlinks);
@@ -1334,10 +1344,13 @@ fn substitute_fix_template(
     with_repo.replace("{branches}", &branches_text)
 }
 
-fn rewrite_fix_for_free_plan(fix_text: &str, account: &str) -> String {
+fn rewrite_fix_for_free_plan(fix_text: &str, account: &str, single_repo: Option<&str>) -> String {
     let prefix = format!("https://github.com/organizations/{account}/settings/rules ");
     match fix_text.strip_prefix(&prefix) {
-        Some(rest) => format!("In all the links below {rest}"),
+        Some(rest) => match single_repo {
+            Some(repo) => format!("https://github.com/{account}/{repo}/settings/rules {rest}"),
+            None => format!("In all the links below {rest}"),
+        },
         None => fix_text.to_string(),
     }
 }
