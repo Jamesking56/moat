@@ -247,7 +247,11 @@ struct WorkflowPerms {
 }
 
 impl RepoContext {
-    pub async fn fetch(client: &impl GitHubClient, org: &str, repo: RepoListing) -> Result<Self> {
+    pub async fn fetch(
+        client: &impl GitHubClient,
+        org: &str,
+        mut repo: RepoListing,
+    ) -> Result<Self> {
         // Forks are filtered out before fetch (see runner::list_repos and
         // org_context::fetch_repo_briefs); if one slips through, refuse to
         // audit it — fork settings are derived from upstream and we can't
@@ -360,6 +364,15 @@ impl RepoContext {
         )?;
 
         let branch_protections = BranchProtections { branches };
+
+        // List endpoints (`/users/{user}/repos`, `/orgs/{org}/repos`) sometimes
+        // omit `security_and_analysis` — it only reliably appears on the repo
+        // detail endpoint. Hydrate from the detail endpoint when missing so
+        // pick_feature doesn't misreport "missing permission".
+        if repo.security_and_analysis.is_none() {
+            repo.security_and_analysis =
+                hydrate_security_and_analysis(client, org, &repo.name).await?;
+        }
 
         let plan_gated = repo.private && branch_protections.any_plan_gated();
         let secret_scanning = pick_feature(
@@ -838,6 +851,25 @@ fn pick_feature(
         None if plan_gated => FeatureState::PlanGated,
         None => return Err(permission_error(resource, org, Some(&repo.name))),
     })
+}
+
+#[derive(Deserialize)]
+struct RepoDetail {
+    security_and_analysis: Option<SecurityAndAnalysis>,
+}
+
+async fn hydrate_security_and_analysis(
+    client: &impl GitHubClient,
+    org: &str,
+    repo: &str,
+) -> Result<Option<SecurityAndAnalysis>> {
+    match client
+        .get_json::<RepoDetail>(&format!("/repos/{org}/{repo}"))
+        .await?
+    {
+        Fetch::Ok(d) => Ok(d.security_and_analysis),
+        Fetch::Forbidden | Fetch::NotFound => Ok(None),
+    }
 }
 
 async fn fetch_dependabot_config(
