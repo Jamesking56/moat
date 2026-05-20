@@ -22,6 +22,7 @@ Moat covers checks across **two-factor authentication**, **branch protection**, 
 ### Homebrew (macOS / Linux)
 
 ```bash
+brew tap laravel/moat https://github.com/laravel/moat
 brew install laravel/moat/moat
 ```
 
