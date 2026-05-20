@@ -212,6 +212,10 @@ criteria = "safe-to-deploy"
 version = "2.2.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.either]]
+version = "1.16.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.encode_unicode]]
 version = "0.3.6"
 criteria = "safe-to-deploy"
@@ -854,10 +858,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.unicode-ident]]
 version = "1.0.24"
-criteria = "safe-to-deploy"
-
-[[exemptions.unicode-segmentation]]
-version = "1.13.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.unit-prefix]]
