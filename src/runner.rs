@@ -410,6 +410,33 @@ pub fn render_raw_panel(title: &str, body: &str) {
     println!();
 }
 
+impl AuthError {
+    /// Render the error body as plain text without the title, suitable for
+    /// embedding inside JSON / markdown output.
+    pub fn to_plain_body(&self) -> String {
+        use std::fmt::Write;
+        let mut out = String::new();
+        for line in &self.lines {
+            match line {
+                AuthErrorLine::Blank => out.push('\n'),
+                AuthErrorLine::Text(s)
+                | AuthErrorLine::Bold(s)
+                | AuthErrorLine::Muted(s)
+                | AuthErrorLine::MutedIndented(s) => {
+                    let _ = writeln!(out, "{s}");
+                }
+                AuthErrorLine::Code(s) => {
+                    let _ = writeln!(out, "    {s}");
+                }
+                AuthErrorLine::Numbered(n, s) => {
+                    let _ = writeln!(out, "{n}. {s}");
+                }
+            }
+        }
+        out
+    }
+}
+
 impl std::fmt::Display for AuthError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "{}", self.title)?;

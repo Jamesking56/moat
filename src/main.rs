@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use anyhow::Result;
 use clap::Parser;
 use moat::runner::{self, AccountKind, AuditTarget, CheckContext};
@@ -5,17 +7,51 @@ use moat::support::panel;
 use moat::support::report::Report;
 use moat::{cli, support};
 
+static OUTPUT_FORMAT: OnceLock<cli::Format> = OnceLock::new();
+
+fn current_format() -> cli::Format {
+    OUTPUT_FORMAT.get().copied().unwrap_or(cli::Format::Pretty)
+}
+
 #[tokio::main]
 async fn main() {
     match run().await {
         Ok(code) => std::process::exit(code),
         Err(e) => {
+            emit_error(current_format(), &e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn emit_error(format: cli::Format, e: &anyhow::Error) {
+    let (title, body) = if let Some(auth) = e.downcast_ref::<moat::runner::AuthError>() {
+        (auth.title.clone(), auth.to_plain_body())
+    } else {
+        ("Error".to_string(), format!("{e:#}"))
+    };
+
+    match format {
+        cli::Format::Pretty => {
             if let Some(auth) = e.downcast_ref::<moat::runner::AuthError>() {
                 auth.render();
             } else {
-                runner::render_generic_error(&format!("{e:#}"));
+                runner::render_generic_error(&body);
             }
-            std::process::exit(1);
+        }
+        cli::Format::Json => {
+            let value = serde_json::json!({
+                "kind": "error",
+                "title": title,
+                "message": body.trim_end(),
+            });
+            if let Ok(rendered) = serde_json::to_string_pretty(&value) {
+                println!("{rendered}");
+            }
+        }
+        cli::Format::Markdown => {
+            println!("# {title}\n");
+            println!("{}", body.trim_end());
         }
     }
 }
@@ -25,10 +61,13 @@ async fn run() -> Result<i32> {
         Ok(cli) => cli,
         Err(e) => {
             panel::init_theme(cli::Theme::Auto.into());
-            render_clap_error(&e);
+            let format = sniff_format_from_argv().unwrap_or(cli::Format::Pretty);
+            let _ = OUTPUT_FORMAT.set(format);
+            render_clap_error(format, &e);
             return Ok(e.exit_code());
         }
     };
+    let _ = OUTPUT_FORMAT.set(cli.format);
     panel::init_theme(cli.theme.into());
 
     if cli.help || (cli.account.is_none() && !cli.self_update && !cli.version) {
@@ -36,12 +75,13 @@ async fn run() -> Result<i32> {
         let inner_width = panel::width().saturating_sub(8);
         let mut cmd = cli::Cli::command().term_width(inner_width);
         let help = cmd.render_help().to_string();
-        runner::render_raw_panel("Moat", &help);
+        emit_info(cli.format, "Moat", "help", &help)?;
         return Ok(0);
     }
 
     if cli.version {
-        runner::render_info_panel("Version", &[format!("Moat v{}", env!("CARGO_PKG_VERSION"))]);
+        let body = format!("Moat v{}", env!("CARGO_PKG_VERSION"));
+        emit_info(cli.format, "Version", "version", &body)?;
         return Ok(0);
     }
 
@@ -56,13 +96,13 @@ async fn run() -> Result<i32> {
             }
             SelfUpdateOutcome::UpToDate => "Moat is already up to date.".to_string(),
             SelfUpdateOutcome::ManagedExternally { manager, latest } => format!(
-                "Moat v{} is available. This binary is managed by {}; run `brew upgrade moat` to update.",
+                "Moat v{} is available. This binary is managed by {}; run `brew update && brew upgrade moat` to update.",
                 latest.trim_start_matches('v'),
                 manager,
             ),
             SelfUpdateOutcome::Failed(e) => format!("Self-update failed: {e}"),
         };
-        runner::render_info_panel("Self-update", &[body]);
+        emit_info(cli.format, "Self-update", "self_update", &body)?;
         return Ok(0);
     }
 
@@ -196,7 +236,7 @@ async fn run() -> Result<i32> {
     }
 }
 
-fn render_clap_error(e: &clap::Error) {
+fn render_clap_error(format: cli::Format, e: &clap::Error) {
     use moat::runner::{AuthError, AuthErrorLine};
     let raw = e.to_string();
     let mut lines: Vec<AuthErrorLine> = Vec::new();
@@ -217,11 +257,82 @@ fn render_clap_error(e: &clap::Error) {
     while matches!(lines.last(), Some(AuthErrorLine::Blank)) {
         lines.pop();
     }
-    AuthError {
+    let err = AuthError {
         title: "Error".to_string(),
         lines,
+    };
+    match format {
+        cli::Format::Pretty => err.render(),
+        cli::Format::Json => {
+            let value = serde_json::json!({
+                "kind": "error",
+                "title": err.title,
+                "message": err.to_plain_body().trim_end(),
+            });
+            if let Ok(rendered) = serde_json::to_string_pretty(&value) {
+                println!("{rendered}");
+            }
+        }
+        cli::Format::Markdown => {
+            println!("# {}\n", err.title);
+            println!("{}", err.to_plain_body().trim_end());
+        }
     }
-    .render();
+}
+
+fn sniff_format_from_argv() -> Option<cli::Format> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if let Some(value) = arg.strip_prefix("--format=") {
+            return parse_format(value);
+        }
+        if arg == "--format"
+            && let Some(value) = args.next()
+        {
+            return parse_format(&value);
+        }
+    }
+    None
+}
+
+fn parse_format(value: &str) -> Option<cli::Format> {
+    match value {
+        "json" => Some(cli::Format::Json),
+        "markdown" => Some(cli::Format::Markdown),
+        "pretty" => Some(cli::Format::Pretty),
+        _ => None,
+    }
+}
+
+fn emit_info(format: cli::Format, title: &str, kind: &str, body: &str) -> Result<()> {
+    match format {
+        cli::Format::Pretty => {
+            if kind == "help" {
+                runner::render_raw_panel(title, body);
+            } else {
+                runner::render_info_panel(title, &[body.to_string()]);
+            }
+        }
+        cli::Format::Json => {
+            let value = serde_json::json!({ "kind": kind, "message": body });
+            let stdout = std::io::stdout();
+            let mut handle = stdout.lock();
+            use std::io::Write;
+            writeln!(handle, "{}", serde_json::to_string_pretty(&value)?)?;
+        }
+        cli::Format::Markdown => {
+            let stdout = std::io::stdout();
+            let mut handle = stdout.lock();
+            use std::io::Write;
+            writeln!(handle, "# {title}\n")?;
+            if kind == "help" {
+                writeln!(handle, "```\n{}\n```", body.trim_end())?;
+            } else {
+                writeln!(handle, "{body}")?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn emit_report(
