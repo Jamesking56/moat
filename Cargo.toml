@@ -5,8 +5,8 @@ edition = "2024"
 rust-version = "1.88"
 description = "Security posture auditing for your github organization & repositories"
 license = "MIT"
-repository = "https://github.com/nunomaduro/moat"
-homepage = "https://github.com/nunomaduro/moat"
+repository = "https://github.com/laravel/moat"
+homepage = "https://github.com/laravel/moat"
 keywords = ["security", "posture", "github", "audit", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 
