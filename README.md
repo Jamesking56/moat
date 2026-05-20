@@ -111,10 +111,6 @@ Without immutability, an existing tag can be moved or its assets replaced after 
 
 A fork PR can ship malicious workflow changes that run with your runners' filesystem and network access on the first push; approval gating lets a human read the diff before code from a stranger executes.
 
-### `repositories_release_branches_are_protected`
-
-Every other branch-level safeguard (signed commits, required reviews, linear history) hangs off a ruleset — with no ruleset attached to your release branches, none of those protections apply.
-
 ### `repositories_commits_are_signed`
 
 A stolen developer token can push commits authored as anyone; requiring a verified signature ties each commit to a key the attacker doesn't have, turning a leaked token from a code-push into a noisy failure.
@@ -122,10 +118,6 @@ A stolen developer token can push commits authored as anyone; requiring a verifi
 ### `repositories_pull_requests_require_reviews`
 
 Without required reviews, a single compromised contributor account can push directly to a release branch — peer review is the cheapest mechanism that catches malicious patches before they ship.
-
-### `repositories_branch_protection_applies_to_admins`
-
-If admins can bypass the ruleset, a single compromised admin token is enough to push unsigned or unreviewed code straight to a release branch — the rule becomes advisory.
 
 ### `repositories_release_branches_are_locked`
 
@@ -190,7 +182,6 @@ release_branches = ["0.x", "1.x"]
 - **GitHub Free plan on private repos.** Several checks rely on features that aren't available on Free for private repositories, so they skip with `N/A (plan)`:
   - `repositories_commits_are_signed`
   - `repositories_pull_requests_require_reviews`
-  - `repositories_branch_protection_applies_to_admins`
   - `repositories_release_branches_are_locked`
   - `repositories_release_branches_have_linear_history`
   - `repositories_secret_scanning_is_enabled`
