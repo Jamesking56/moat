@@ -266,7 +266,6 @@ impl RepoContext {
 
         let webhooks_path = format!("/repos/{org}/{}/hooks", repo.name);
 
-        // Phase 2: every remaining endpoint runs concurrently.
         let (
             branches,
             workflow_token,

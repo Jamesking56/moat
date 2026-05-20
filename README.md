@@ -9,9 +9,11 @@
 
 ## Introduction
 
-**Moat** audits the security posture of your GitHub organization & repositories. It works with any GitHub **user**, **organization**, or **repository** — verifying that the security controls GitHub offers (2FA enforcement, branch protection, secret scanning, and more) are actually enabled and configured correctly.
+**Moat** reviews the security posture of your GitHub **user**, **organization**, or **repository** and surfaces suggestions to consider. It inspects the security controls GitHub already offers — 2FA enforcement, branch protection, signed commits, secret scanning, Dependabot alerts, workflow permissions, pinned actions, repository webhooks, and more — and reports which ones are not enabled or not configured in line with common recommendations.
 
-It checks **two-factor authentication**, **branch protection**, **signed commits**, **secret scanning**, **Dependabot alerts**, **workflow permissions**, **pinned actions**, **repository webhooks**, and more. Zero config — just install and run.
+Moat covers checks across **two-factor authentication**, **branch protection**, **signed commits**, **secret scanning**, **Dependabot alerts**, **workflow permissions**, **pinned actions**, **repository webhooks**, and others.
+
+> **What Moat is — and what it is not.** Moat is a read-only review tool. It does **not** modify any settings, harden your repositories, prevent intrusions, or remediate compromises. It surfaces **suggestions** based on GitHub's own security settings; it is your responsibility to evaluate each one in the context of your project and decide whether to apply it. A clean Moat report does not certify that an account is secure, nor does a failing report mean it has been compromised.
 
 ## Installation
 
@@ -63,7 +65,12 @@ For organization audits the token needs:
 
 A classic PAT with these scopes works. For user accounts, only `repo` and `workflow` are required.
 
+> > [!IMPORTANT]
+> > **If you create a personal access token to run Moat, revoke it as soon as you're done.** Visit [github.com/settings/tokens](https://github.com/settings/tokens) and delete the token after your review. Tokens that linger on disk or in shell history are themselves a security risk — Moat only needs access for the duration of the run.
+
 ## Checks
+
+Each entry below describes a security setting Moat looks at, along with the reasoning behind the suggestion. The text explains the risk that the setting helps mitigate — it does not imply that enabling the setting alone is sufficient to defend against the threat, nor that leaving it disabled means an account is compromised.
 
 ### `organization_requires_two_factor`
 

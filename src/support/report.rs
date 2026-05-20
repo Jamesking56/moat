@@ -161,7 +161,7 @@ impl Report {
                 if let Some(desc) = &c.description {
                     out.push_str(&format!("**Description:** {desc}\n\n"));
                 }
-                out.push_str(&format!("**How to fix:** {}\n\n", c.how_to_fix));
+                out.push_str(&format!("**Suggested fix:** {}\n\n", c.how_to_fix));
                 if !c.affected.is_empty() {
                     out.push_str("**Affected:**\n\n");
                     for a in &c.affected {
@@ -314,7 +314,7 @@ mod tests {
         assert!(md.contains("| Status | Check | Summary |"));
         assert!(md.contains("## Details"));
         assert!(md.contains("**Description:** note text"));
-        assert!(md.contains("**How to fix:**"));
+        assert!(md.contains("**Suggested fix:**"));
         assert!(md.contains("`repo-a`"));
         assert!(md.contains("(`main`)"));
         // Passing checks should not appear in details section.

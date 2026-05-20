@@ -4,7 +4,7 @@ use clap::{Parser, ValueEnum};
 #[command(
     name = "moat",
     version,
-    about = "Security posture auditing for your GitHub organization & repositories",
+    about = "Reviews the security posture of your GitHub organization & repositories and suggests improvements",
     disable_help_flag = true,
     disable_version_flag = true
 )]

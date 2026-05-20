@@ -227,7 +227,7 @@ pub enum AuthErrorLine {
     Blank,
     /// Regular prose, wrapped to the panel width.
     Text(String),
-    /// Bolded section label (e.g. `Currently granted:` / `How to fix:`).
+    /// Bolded section label (e.g. `Currently granted:` / `Suggested fix:`).
     Bold(String),
     /// Monospaced action — shown indented in info colour (commands, URLs).
     Code(String),
@@ -237,6 +237,10 @@ pub enum AuthErrorLine {
     /// for follow-up notes that belong to the step above (e.g. a `gh auth
     /// login` command's revoke instructions).
     MutedIndented(String),
+    /// Attention-grabbing red note aligned under a numbered step's body
+    /// (5-space indent). Used for token-handling warnings the reader must
+    /// not miss (e.g. "revoke this token once you're done").
+    DangerIndented(String),
     /// A numbered step. The number is rendered muted (like check rows) so the
     /// reader's eye lands on the action text, not the list bookkeeping.
     Numbered(u32, String),
@@ -279,6 +283,13 @@ impl AuthError {
                     let inner = text_width.saturating_sub(3);
                     for wrapped in panel::wrap(s, inner) {
                         let l = panel::Line::new().space(6).styled(&wrapped, panel::muted);
+                        panel::row(l);
+                    }
+                }
+                AuthErrorLine::DangerIndented(s) => {
+                    let inner = text_width.saturating_sub(3);
+                    for wrapped in panel::wrap(s, inner) {
+                        let l = panel::Line::new().space(6).styled(&wrapped, panel::danger);
                         panel::row(l);
                     }
                 }
@@ -422,7 +433,8 @@ impl AuthError {
                 AuthErrorLine::Text(s)
                 | AuthErrorLine::Bold(s)
                 | AuthErrorLine::Muted(s)
-                | AuthErrorLine::MutedIndented(s) => {
+                | AuthErrorLine::MutedIndented(s)
+                | AuthErrorLine::DangerIndented(s) => {
                     let _ = writeln!(out, "{s}");
                 }
                 AuthErrorLine::Code(s) => {
@@ -446,7 +458,8 @@ impl std::fmt::Display for AuthError {
                 AuthErrorLine::Text(s)
                 | AuthErrorLine::Bold(s)
                 | AuthErrorLine::Muted(s)
-                | AuthErrorLine::MutedIndented(s) => writeln!(f, "{s}")?,
+                | AuthErrorLine::MutedIndented(s)
+                | AuthErrorLine::DangerIndented(s) => writeln!(f, "{s}")?,
                 AuthErrorLine::Code(s) => writeln!(f, "    {s}")?,
                 AuthErrorLine::Numbered(n, s) => writeln!(f, "{n}. {s}")?,
             }
@@ -490,19 +503,19 @@ pub fn format_missing_scopes_error(
 
     match source {
         AuthSource::GhCli => {
-            lines.push(AuthErrorLine::Bold("How to fix:".to_string()));
+            lines.push(AuthErrorLine::Bold("Suggested fix:".to_string()));
             lines.push(AuthErrorLine::Text("Run:".to_string()));
             lines.push(AuthErrorLine::Code(format!(
                 "gh auth login -s {required_joined} -h github.com -w"
             )));
-            lines.push(AuthErrorLine::MutedIndented(
-                "Revoke it later: run `gh auth logout` + revoke GitHub CLI from https://github.com/settings/applications".to_string(),
+            lines.push(AuthErrorLine::DangerIndented(
+                "Important: revoke it as soon as you're done — run `gh auth logout` and revoke the GitHub CLI authorization at https://github.com/settings/applications.".to_string(),
             ));
             lines.push(AuthErrorLine::Blank);
             lines.push(AuthErrorLine::Muted("Then re-run Moat.".to_string()));
         }
         AuthSource::GithubTokenEnv | AuthSource::GhTokenEnv => {
-            lines.push(AuthErrorLine::Bold("How to fix:".to_string()));
+            lines.push(AuthErrorLine::Bold("Suggested fix:".to_string()));
             lines.push(AuthErrorLine::Numbered(
                 1,
                 "Regenerate the PAT with all required scopes ticked at:".to_string(),
@@ -513,6 +526,9 @@ pub fn format_missing_scopes_error(
             lines.push(AuthErrorLine::Text(format!(
                 "   Then: export {source}=<new-token>"
             )));
+            lines.push(AuthErrorLine::DangerIndented(
+                "Important: revoke this token at https://github.com/settings/tokens as soon as you're done running Moat.".to_string(),
+            ));
             lines.push(AuthErrorLine::Blank);
             lines.push(AuthErrorLine::Numbered(
                 2,
@@ -560,11 +576,11 @@ pub fn format_no_token_error(detail: &str) -> AuthError {
             ),
             AuthErrorLine::Muted(format!("(detail: {detail})")),
             AuthErrorLine::Blank,
-            AuthErrorLine::Bold("How to fix:".to_string()),
+            AuthErrorLine::Bold("Suggested fix:".to_string()),
             AuthErrorLine::Numbered(1, "Sign in with the gh CLI:".to_string()),
             AuthErrorLine::Code("gh auth login -s admin:org,repo,workflow -h github.com -w".to_string()),
-            AuthErrorLine::MutedIndented(
-                "Revoke it later: run `gh auth logout` + revoke GitHub CLI from https://github.com/settings/applications".to_string(),
+            AuthErrorLine::DangerIndented(
+                "Important: revoke it as soon as you're done — run `gh auth logout` and revoke the GitHub CLI authorization at https://github.com/settings/applications.".to_string(),
             ),
             AuthErrorLine::Blank,
             AuthErrorLine::Numbered(
@@ -573,6 +589,9 @@ pub fn format_no_token_error(detail: &str) -> AuthError {
                     .to_string(),
             ),
             AuthErrorLine::Code("export GITHUB_TOKEN=<your-token>".to_string()),
+            AuthErrorLine::DangerIndented(
+                "Important: revoke this token at https://github.com/settings/tokens as soon as you're done running Moat.".to_string(),
+            ),
             AuthErrorLine::Blank,
             AuthErrorLine::Muted("Then re-run Moat.".to_string()),
         ],
@@ -586,7 +605,7 @@ pub fn format_unauthorized_error(source: AuthSource) -> AuthError {
             "GitHub rejected your token (from {source}): 401 Unauthorized — it is expired, revoked, or malformed."
         )),
         AuthErrorLine::Blank,
-        AuthErrorLine::Bold("How to fix:".to_string()),
+        AuthErrorLine::Bold("Suggested fix:".to_string()),
     ];
     match source {
         AuthSource::GhCli => {
@@ -597,8 +616,8 @@ pub fn format_unauthorized_error(source: AuthSource) -> AuthError {
             lines.push(AuthErrorLine::Code(
                 "gh auth login -s admin:org,repo,workflow -h github.com -w".to_string(),
             ));
-            lines.push(AuthErrorLine::MutedIndented(
-                "Revoke it later: run `gh auth logout` + revoke GitHub CLI from https://github.com/settings/applications".to_string(),
+            lines.push(AuthErrorLine::DangerIndented(
+                "Important: revoke it as soon as you're done — run `gh auth logout` and revoke the GitHub CLI authorization at https://github.com/settings/applications.".to_string(),
             ));
         }
         AuthSource::GithubTokenEnv | AuthSource::GhTokenEnv => {
@@ -616,6 +635,9 @@ pub fn format_unauthorized_error(source: AuthSource) -> AuthError {
                 "(fine-grained PATs are not supported — Moat needs org-level access)".to_string(),
             ));
             lines.push(AuthErrorLine::Code(format!("export {source}=<new-token>")));
+            lines.push(AuthErrorLine::DangerIndented(
+                "Important: revoke this token at https://github.com/settings/tokens as soon as you're done running Moat.".to_string(),
+            ));
             lines.push(AuthErrorLine::Blank);
             lines.push(AuthErrorLine::Numbered(
                 2,
@@ -1315,7 +1337,7 @@ pub fn render_checks_panel(
         let rules_link = is_finding && r.check.ruleset_based && (plan_free || user_account);
 
         if is_finding {
-            let header = "How to fix:";
+            let header = "Suggested fix:";
             let head = panel::Line::new().space(5).styled(header, panel::text_bold);
             panel::row(head);
             let repo = r.affected_repos.first().map(|s| s.as_str());
