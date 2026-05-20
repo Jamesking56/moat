@@ -1,9 +1,9 @@
 <p align="center">
     <img src="./art/logo.png" alt="moat" width="800">
     <p align="center">
-        <a href="https://github.com/nunomaduro/moat/actions"><img alt="GitHub Workflow Status (main)" src="https://github.com/nunomaduro/moat/actions/workflows/ci.yml/badge.svg"></a>
-        <a href="https://github.com/nunomaduro/moat/releases"><img alt="Latest Version" src="https://img.shields.io/github/v/release/nunomaduro/moat"></a>
-        <a href="https://github.com/nunomaduro/moat/blob/0.x/LICENSE"><img alt="License" src="https://img.shields.io/github/license/nunomaduro/moat"></a>
+        <a href="https://github.com/laravel/moat/actions"><img alt="GitHub Workflow Status (main)" src="https://github.com/laravel/moat/actions/workflows/ci.yml/badge.svg"></a>
+        <a href="https://github.com/laravel/moat/releases"><img alt="Latest Version" src="https://img.shields.io/github/v/release/laravel/moat"></a>
+        <a href="https://github.com/laravel/moat/blob/0.x/LICENSE"><img alt="License" src="https://img.shields.io/github/license/laravel/moat"></a>
     </p>
 </p>
 
@@ -22,12 +22,12 @@ Moat covers checks across **two-factor authentication**, **branch protection**, 
 ### Homebrew (macOS / Linux)
 
 ```bash
-brew install nunomaduro/tap/moat
+brew install laravel/moat/moat
 ```
 
 ### Prebuilt binaries
 
-Download the archive for your platform from the [releases page](https://github.com/nunomaduro/moat/releases) and place `moat` on your `PATH`.
+Download the archive for your platform from the [releases page](https://github.com/laravel/moat/releases) and place `moat` on your `PATH`.
 
 ## Usage
 
@@ -212,7 +212,7 @@ In order to ensure that the Laravel community is welcoming to all, please review
 
 ## Security Vulnerabilities
 
-Please review [our security policy](https://github.com/nunomaduro/moat/security/policy) on how to report security vulnerabilities.
+Please review [our security policy](https://github.com/laravel/moat/security/policy) on how to report security vulnerabilities.
 
 ## License
 

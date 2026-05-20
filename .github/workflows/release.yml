@@ -119,18 +119,14 @@ jobs:
           draft: false
 
   update-homebrew-tap:
-    name: Update Homebrew tap
+    name: Update Homebrew formula
     needs: release
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
-      - name: Checkout homebrew-tap
+      - name: Checkout repo
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        with:
-          repository: nunomaduro/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-tap
 
       - name: Download SHA256SUMS
         run: |
@@ -153,10 +149,10 @@ jobs:
             fi
           done
 
-          cat > homebrew-tap/Formula/moat.rb <<EOF
-          # Place this file at Formula/moat.rb in a repo named \`homebrew-tap\`
-          # (e.g. github.com/nunomaduro/homebrew-tap), then users run:
-          #   brew install nunomaduro/tap/moat
+          mkdir -p Formula
+          cat > Formula/moat.rb <<EOF
+          # This repo doubles as a Homebrew tap. Users install with:
+          #   brew install laravel/moat/moat
           #
           # This file is updated automatically by the release workflow.
 
@@ -195,15 +191,24 @@ jobs:
           EOF
 
       - name: Commit and push
-        working-directory: homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet; then
+
+          DEFAULT_BRANCH="$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)"
+          cp Formula/moat.rb /tmp/moat.rb
+          git fetch origin "$DEFAULT_BRANCH"
+          git checkout -f "$DEFAULT_BRANCH"
+          mkdir -p Formula
+          cp /tmp/moat.rb Formula/moat.rb
+
+          if git diff --quiet -- Formula/moat.rb; then
             echo "Formula already up to date."
             exit 0
           fi
           git add Formula/moat.rb
-          git commit -m "chore: bump moat to v${VERSION}"
-          git push
+          git commit -m "chore: bump moat to v${VERSION} [skip ci]"
+          git push origin "$DEFAULT_BRANCH"
