@@ -65,8 +65,7 @@ For organization audits the token needs:
 
 A classic PAT with these scopes works. For user accounts, only `repo` and `workflow` are required.
 
-> > [!IMPORTANT]
-> > **If you create a personal access token to run Moat, revoke it as soon as you're done.** Visit [github.com/settings/tokens](https://github.com/settings/tokens) and delete the token after your review. Tokens that linger on disk or in shell history are themselves a security risk — Moat only needs access for the duration of the run.
+**Important: If you create a personal access token to run Moat, revoke it as soon as you're done.** Visit [github.com/settings/tokens](https://github.com/settings/tokens) and delete the token after your review. Tokens that linger on disk or in shell history are themselves a security risk — Moat only needs access for the duration of the run.
 
 ## Checks
 
