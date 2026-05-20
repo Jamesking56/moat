@@ -187,11 +187,6 @@ release_branches = ["0.x", "1.x"]
   - `repositories_secret_scanning_is_enabled`
   - `repositories_secret_push_protection_is_enabled`
 
-## Exit Codes
-
-- `0` — all checks passed
-- non-zero — at least one check failed or an error occurred
-
 ## Contributing
 
 Thank you for considering contributing to Moat! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
