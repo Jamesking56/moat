@@ -1341,15 +1341,7 @@ pub fn render_checks_panel(
             let head = panel::Line::new().space(5).styled(header, panel::text_bold);
             panel::row(head);
             let repo = r.affected_repos.first().map(|s| s.as_str());
-            let mut branches: Vec<String> = r
-                .affected_repo_release_branches
-                .iter()
-                .flatten()
-                .cloned()
-                .collect();
-            branches.sort();
-            branches.dedup();
-            let mut fix_text = substitute_fix_template(r.how_to_fix, account, repo, &branches);
+            let mut fix_text = substitute_fix_template(r.how_to_fix, account, repo);
             if rewrite_org_url {
                 let distinct: std::collections::HashSet<&str> =
                     r.affected_repos.iter().map(|s| s.as_str()).collect();
@@ -1510,23 +1502,13 @@ fn render_member_block(title: &str, list: &[String], text_width: usize, verbose:
     }
 }
 
-fn substitute_fix_template(
-    template: &str,
-    account: &str,
-    repo: Option<&str>,
-    branches: &[String],
-) -> String {
+fn substitute_fix_template(template: &str, account: &str, repo: Option<&str>) -> String {
     let with_org = template.replace("{org}", account);
     let with_repo = match repo {
         Some(r) => with_org.replace("{repo}", r),
         None => with_org,
     };
-    let branches_text = if branches.is_empty() {
-        "Default + release branches".to_string()
-    } else {
-        branches.join(", ")
-    };
-    with_repo.replace("{branches}", &branches_text)
+    with_repo.replace("{branches}", "(Select all release branches)")
 }
 
 fn rewrite_fix_for_free_plan(fix_text: &str, account: &str, single_repo: Option<&str>) -> String {
