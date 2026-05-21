@@ -9,7 +9,7 @@
 
 ## Introduction
 
-**Moat** reviews the security posture of your GitHub **user**, **organization**, or **repository** and surfaces suggestions to consider. It inspects the security controls GitHub already offers — 2FA enforcement, branch protection, signed commits, secret scanning, Dependabot alerts, workflow permissions, pinned actions, repository webhooks, and more — and reports which ones are not enabled or not configured in line with common recommendations.
+**Moat** reviews the security posture of your **GitHub organization** and **repositories**, then surfaces recommendations to consider. It inspects the security controls GitHub already offers — 2FA enforcement, branch protection, signed commits, secret scanning, Dependabot alerts, workflow permissions, pinned actions, repository webhooks, and more — and reports which ones are not enabled or not configured in line with common recommendations.
 
 Moat covers checks across **two-factor authentication**, **branch protection**, **signed commits**, **secret scanning**, **Dependabot alerts**, **workflow permissions**, **pinned actions**, **repository webhooks**, and others.
 
