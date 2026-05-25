@@ -27,6 +27,16 @@ brew tap laravel/moat https://github.com/laravel/moat
 brew install laravel/moat/moat
 ```
 
+### Arch Linux
+
+Install from the [AUR](https://aur.archlinux.org/packages/laravel-moat):
+
+```bash
+yay -S laravel-moat
+# or
+paru -S laravel-moat
+```
+
 ### Prebuilt binaries
 
 Download the archive for your platform from the [releases page](https://github.com/laravel/moat/releases) and place `moat` on your `PATH`.
